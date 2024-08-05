@@ -1,0 +1,17 @@
+name: opinion_dynamics
+channels:
+  - pytorch
+  - plotly
+  - conda-forge
+  - defaults
+dependencies:
+  - pandas
+  - numpy
+  - matplotlib
+  - munch
+  - basemap
+  - plotly
+  - pip:
+    - jax==0.4.26
+    - jax-metal==0.1.0
+    - jaxlib==0.4.26

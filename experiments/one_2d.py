@@ -2,14 +2,15 @@ import jax.numpy as jnp
 from jax import vmap, jacfwd
 from jax.scipy.stats import norm
 import munch
-import numpy as np
 from scipy.linalg import solve
 from scipy.linalg import lstsq
-
+from matplotlib import cm
 import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
 
-x_d = 0
-y_d = -2
+x_d = 2
+y_d = 2
+
 
 class OnePopulationalMFG(object):
     def __init__(self, T, Nt, xl, xr, yl, yr, N, M, nu, alpha, eps):
@@ -37,56 +38,65 @@ class OnePopulationalMFG(object):
         self.alpha = alpha
         self.hx = (xr - xl) / N
         self.hy = (yr - yl) / M
-        self.X = jnp.linspace(xl, xr, N, endpoint=False)
-        self.Y = jnp.linspace(yl, yr, M, endpoint=False)
+        self.XX = jnp.linspace(xl, xr, N, endpoint=False)
+        self.YY = jnp.linspace(yl, yr, M, endpoint=False)
+        self.XX, self.YY = jnp.meshgrid(self.XX, self.YY)
         self.eps = eps
 
     def m0(self, x, y):
-        x_midpoint = -2  # Start away from the desired point
-        y_midpoint = 2
-        sigma_mu = 1  # Define your standard deviation
+        x_midpoint = 1
+        y_midpoint = 1
+        sigma_mu = 1
         return norm.pdf(x, loc=x_midpoint, scale=sigma_mu) * norm.pdf(y, loc=y_midpoint, scale=sigma_mu)
 
     def uT(self, x, y):
-        return (x - x_d) ** 2 + (y - y_d) ** 2
+        value = (x - x_d) ** 2 + (y - y_d) ** 2
+        return value
 
     def g(self, q1, q2):
-        p1 = jnp.minimum(q1, 0)
-        p2 = jnp.maximum(q2, 0)
-        return 0.5 * ((p1 ** 2) + (p2 ** 2))
+        return 0.5 * ((q1 ** 2) + (q2 ** 2))
 
     def hamilton(self, U):
-        dUx = (jnp.roll(U, -1, axis=0) - jnp.roll(U, 1, axis=0)) / (2 * self.hx)
-        dUy = (jnp.roll(U, -1, axis=1) - jnp.roll(U, 1, axis=1)) / (2 * self.hy)
+        Ux = (jnp.roll(U, -1, axis=0) - jnp.roll(U, 1, axis=0)) / (2 * self.hx)
+        Uy = (jnp.roll(U, -1, axis=1) - jnp.roll(U, 1, axis=1)) / (2 * self.hy)
 
-        Hamiltonian = vmap(lambda qx, qy: self.g(qx, qy))(dUx, dUy)
+        Hamiltonian = vmap(lambda qx, qy: self.g(qx, qy))(Ux, Uy)
         return Hamiltonian
 
     def fp_linearized_part(self, U, M):
-        UR = (jnp.roll(U, -1, axis=0) - U) / self.hx
-        UL = (U - jnp.roll(U, 1, axis=0)) / self.hx
+        UR = jnp.roll(U, -1, axis=0)  # U shifted left (i+1)
+        UL = jnp.roll(U, 1, axis=0)  # U shifted right (i-1)
 
-        UR_flatten = UR.flatten()
-        UL_flatten = UL.flatten()
-        M_flatten = M.flatten()
+        UR_y = jnp.roll(U, -1, axis=1)  # U shifted up (j+1)
+        UL_y = jnp.roll(U, 1, axis=1)  # U shifted down (j-1)
 
-        dGq1 = lambda q1, q2: jnp.minimum(q1, 0)
-        dGq2 = lambda q1, q2: jnp.maximum(q2, 0)
+        MR = jnp.roll(M, -1, axis=0)  # M shifted left (i+1)
+        ML = jnp.roll(M, 1, axis=0)  # M shifted right (i-1)
 
-        dGq1s = vmap(dGq1)(UR_flatten, UL_flatten)
-        dGq2s = vmap(dGq2)(UR_flatten, UL_flatten)
+        MR_y = jnp.roll(M, -1, axis=1)  # M shifted up (j+1)
+        ML_y = jnp.roll(M, 1, axis=1)  # M shifted down (j-1)
 
-        dGq1s = jnp.multiply(dGq1s, M_flatten)
-        dGq2s = jnp.multiply(dGq2s, M_flatten)
+        u_ip1_jp1 = jnp.roll(jnp.roll(U, -1, axis=0), -1, axis=1)  # u_{i+1,j+1}
+        u_ip1_jm1 = jnp.roll(jnp.roll(U, -1, axis=0), 1, axis=1)  # u_{i+1,j-1}
+        u_im1_jp1 = jnp.roll(jnp.roll(U, 1, axis=0), -1, axis=1)  # u_{i-1,j+1}
+        u_im1_jm1 = jnp.roll(jnp.roll(U, 1, axis=0), 1, axis=1)  # u_{i-1,j-1}
 
-        dGqDifference1 = dGq1s - dGq2s
+        u_xy = (u_ip1_jp1 - u_ip1_jm1 - u_im1_jp1 + u_im1_jm1) / (4 * self.hx * self.hy)
 
-        dGqs2R = jnp.roll(dGq2s, -1).reshape(UR.shape)
-        dGqs1L = jnp.roll(dGq1s, 1).reshape(UR.shape)
+        Delta_U = - (4 * U - UR - UL - UR_y - UL_y) / (self.hx ** 2)
 
-        A = - (dGqDifference1 + dGqs2R.flatten() - dGqs1L.flatten()) / self.hx
+        Ux = (UR - UL) / (2 * self.hx)
+        Uy = (UR_y - UL_y) / (2 * self.hy)
 
-        return A.reshape(U.shape)
+        Mx = (MR - ML) / (2 * self.hx)
+        My = (MR_y - ML_y) / (2 * self.hy)
+
+        # Ensure that the multiplication doesn't lead to NaN or inf by using jnp.clip
+        val = -(jnp.multiply(M, Delta_U) +
+                2 * jnp.multiply(M, u_xy) +
+                jnp.multiply((Mx + My), (Ux + Uy)))
+
+        return val
 
     def hjb(self, t, Uk1, Uk, Mk1):
         UR = jnp.roll(Uk, -1, axis=0)
@@ -111,7 +121,6 @@ class OnePopulationalMFG(object):
         Mk1L_y = jnp.roll(Mk1, 1, axis=1)
 
         Delta_M = - (4 * Mk1 - Mk1R - Mk1L - Mk1R_y - Mk1L_y) / (self.hx ** 2)
-
         adj = self.fp_linearized_part(Uk, Mk1)
 
         return Dt_M - self.nu * Delta_M + adj
@@ -138,8 +147,8 @@ class OnePopulationalMFG(object):
         M = M.at[1:, :, :].set(Mmtx)
 
         # compute the values of m at time 0 and the values of u at time T
-        M0 = vmap(self.m0)(self.X, self.Y)
-        UT = vmap(self.uT)(self.X, self.Y)
+        M0 = vmap(self.m0)(self.XX, self.YY)
+        UT = vmap(self.uT)(self.XX, self.YY)
 
         U = U.at[self.Nt, :, :].set(UT)
         M = M.at[0, :, :].set(M0)
@@ -188,7 +197,6 @@ class OnePopulationalMFG(object):
 
             Uerr = U1 - U
             Merr = M1 - M
-
             error = jnp.dot(Uerr, Uerr) + jnp.dot(Merr, Merr)
             print('the mfg error is {}'.format(error))
 
@@ -202,14 +210,14 @@ class OnePopulationalMFG(object):
 
 
 cfg = munch.munchify({
-    'T' : 1,
-    'Nt': 20,
+    'T': 1,
+    'Nt': 10,
     'xl': -5,
     'xr': 5,
     'yl': -5,
     'yr': 5,
-    'N': 20,
-    'M': 20,
+    'N': 30,
+    'M': 30,
     'nu': 1,
     'alpha': 1,
     'eps': 1,
@@ -217,7 +225,7 @@ cfg = munch.munchify({
     'hjb_lr': 1,
     'epoch': 100,
     'lr': 1,
-    'tol' : 10 ** (-7),
+    'tol': 10 ** (-8),
 })
 
 solver = OnePopulationalMFG(cfg.T, cfg.Nt, cfg.xl, cfg.xr, cfg.yl, cfg.yr, cfg.N, cfg.M, cfg.nu, cfg.alpha, cfg.eps)
@@ -230,40 +238,90 @@ TT, XX, YY = jnp.meshgrid(TT, XX, YY)
 # Solve to get U and M
 U, M = solver.solve(cfg.tol, cfg.epoch, cfg.hjb_lr, cfg.hjb_epoch)
 
-# Select the final time step and reshape U and M
-time_step = -1  # Last time step
+# Create the 3D plot for m0
+fig = plt.figure(figsize=(12, 8))
+ax = fig.add_subplot(111, projection='3d')
+surf = ax.plot_surface(XX[:, -1, :], YY[:, -1, :], M[0, :, :], cmap=cm.coolwarm, alpha=0.8)
+fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5)
+ax.set_xlabel(r"$x$")
+ax.set_ylabel(r"$y$")
+ax.set_zlabel(r"$m_0(x, y)$")
+ax.set_title("Initial Distribution $m_0(x, y)$")
 
-U_final = U[time_step].reshape(cfg.N, cfg.M)
-M_final = M[time_step].reshape(cfg.N, cfg.M)
+ax.set_box_aspect([1, 1, 0.5])  # Aspect ratio is 1:1:0.5
 
-# Generate the meshgrid for XX and YY (ignore TT for plotting)
-XX_grid, YY_grid = np.meshgrid(XX[:, 0, 0], YY[0, 0, :])
-
-# Plot U
-fig = plt.figure(figsize=(12, 5))
-
-ax = fig.add_subplot(121, projection='3d')
-ax.plot_surface(XX_grid, YY_grid, U_final, cmap='viridis')
-ax.set_title('Potential Function U at Final Time Step')
-ax.set_xlabel('x')
-ax.set_ylabel('y')
-ax.set_zlabel('U')
-
-# Plot M
-ax = fig.add_subplot(122, projection='3d')
-ax.plot_surface(XX_grid, YY_grid, M_final, cmap='viridis')
-ax.set_title('Density Function M at Final Time Step')
-ax.set_xlabel('x')
-ax.set_ylabel('y')
-ax.set_zlabel('M')
-
-plt.tight_layout()
+plt.tight_layout()  # Adjust layout to fit all elements
 plt.show()
 
-# Generate a consistent meshgrid that matches the shape of U_final and M_final
-XX_2D, YY_2D = np.meshgrid(XX[:cfg.N], YY[:cfg.M])
 
-# Extract the final time step for U and M, ensuring they are 2D
-U_final = U[-1, :, :]
-M_final = M[-1, :, :]
+# Create the 3D plot for m0
+fig = plt.figure(figsize=(12, 8))
+ax = fig.add_subplot(111, projection='3d')
+surf = ax.plot_surface(XX[:, -1, :], YY[:, -1, :], U[-1, :, :], cmap=cm.coolwarm, alpha=0.8)
+fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5)
+ax.set_xlabel(r"$x$")
+ax.set_ylabel(r"$y$")
+ax.set_zlabel(r"$m_0(x, y)$")
+ax.set_title("Final Distribution $m_T(x, y)$")
+z_min, z_max = ax.get_zlim()  # Get the current z-axis limits
+ax.plot([x_d, x_d], [y_d, y_d], [z_min, z_max], color='green', linestyle='--', label=r"Line at $(x_{d}, y_{d})$")
+ax.legend()
 
+plt.show()
+
+# Create the 3D plot for m0
+fig = plt.figure(figsize=(12, 8))
+ax = fig.add_subplot(111, projection='3d')
+surf = ax.plot_surface(XX[:, -1, :], YY[:, -1, :], M[-1, :, :], cmap=cm.coolwarm, alpha=0.8)
+fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5)
+ax.set_xlabel(r"$x$")
+ax.set_ylabel(r"$y$")
+ax.set_zlabel(r"$m_0(x, y)$")
+ax.set_title("Final Distribution $m_T(x, y)$")
+z_min, z_max = ax.get_zlim()  # Get the current z-axis limits
+ax.plot([x_d, x_d], [y_d, y_d], [z_min, z_max], color='green', linestyle='--', label=r"Line at $(x_{d}, y_{d})$")
+ax.legend()
+
+plt.show()
+
+# Set a fixed aspect ratio
+ax.set_box_aspect([1, 1, 0.5])  # Aspect ratio is 1:1:0.5
+
+plt.tight_layout()  # Adjust layout to fit all elements
+plt.show()
+
+# Define time steps to visualize
+time_steps = range(cfg.Nt + 1)  # Visualize all time steps
+
+z_min = jnp.min(M)
+z_max = jnp.max(M)
+
+fig = plt.figure(figsize=(12, 8))
+ax = fig.add_subplot(111, projection='3d')
+
+
+def update_plot(t):
+    ax.clear()
+    surf = ax.plot_surface(XX[:, -1, :], YY[:, -1, :], M[t, :, :], cmap=cm.coolwarm, alpha=0.8)
+    ax.set_xlabel(r"$x$")
+    ax.set_ylabel(r"$y$")
+    ax.set_zlabel(r"$m(t, x, y)$")
+    ax.set_title(f"Distribution at t = {t}")
+
+    # Apply consistent z-axis limits
+    ax.set_zlim(z_min, z_max)
+
+    # Plot the vertical line
+    ax.plot([x_d, x_d], [y_d, y_d], [z_min, z_max], color='green', linestyle='--', label=r"Line at $(x_{d}, y_{d})$")
+    ax.legend()
+
+    # Set a fixed aspect ratio
+    ax.set_box_aspect([1, 1, 0.5])  # Aspect ratio is 1:1:0.5
+
+
+ani = FuncAnimation(fig, update_plot, frames=range(cfg.Nt + 1), repeat=False)
+
+# To save the animation as a GIF file
+ani.save('distribution_evolution.gif', writer='imagemagick', dpi=80)
+
+plt.show()

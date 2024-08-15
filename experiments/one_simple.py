@@ -153,7 +153,6 @@ class OnePopulationalMFG(object):
         U = U.at[:self.Nt, :].set(Umtx)
         M = M.at[1:, :].set(Mmtx)
 
-        # compute the values of m at time 0 and the values of u at time T
         M0 = vmap(self.m0)(self.X)
         UT = vmap(self.uT)(self.X)
 

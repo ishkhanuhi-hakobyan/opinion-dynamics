@@ -31,9 +31,9 @@ class TwoPopSimplified(object):
 
     def uT(self, x, population_index):
         if population_index == 0:
-            return (x - x_d1) ** 2  # For population 1
+            return (x - x_d1) ** 2
         elif population_index == 1:
-            return (x - x_d2) ** 2  # For population 2
+            return (x - x_d2) ** 2
 
     def prolong(self, Uvec, Mvec, idx):
         Umtx = jnp.reshape(Uvec, (self.Nt, self.N))
@@ -211,8 +211,6 @@ TT, XX = jnp.meshgrid(TT, XX)
 
 U1, M1, U2, M2 = solver.solve(cfg.tol, cfg.epoch, cfg.hjb_lr, cfg.hjb_epoch)
 
-# TT = np.linspace(0, cfg.T, cfg.Nt + 1)
-# XX = np.linspace(-10, 10, cfg.N, endpoint=False)
 
 # Final value function for both populations
 plt.figure()

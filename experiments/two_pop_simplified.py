@@ -8,6 +8,7 @@ import numpy as np
 x_d1 = -1.5
 x_d2 = 1
 
+
 class TwoPopSimplified(object):
     def __init__(self, T, Nt, xl, xr, N, nu, alphas, sigmas, lambdas, eps):
         self.T = T
@@ -26,8 +27,7 @@ class TwoPopSimplified(object):
         self.eps = eps
         self.h = (xr - xl) / N
 
-    def mu0(self, x,
-            population_index):
+    def mu0(self, x,population_index):
         if population_index == 0:
             # return jnp.ones(x.shape) / (self.xr - self.xl)
             midpoint = (self.xr + self.xl) / 2

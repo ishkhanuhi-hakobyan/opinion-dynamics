@@ -8,6 +8,7 @@ from matplotlib import cm
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
+
 x_d = 2
 y_d = 2
 
@@ -76,14 +77,14 @@ class OnePopulationalMFG(object):
         MR_y = jnp.roll(M, -1, axis=1)  # M shifted up (j+1)
         ML_y = jnp.roll(M, 1, axis=1)  # M shifted down (j-1)
 
-        u_ip1_jp1 = jnp.roll(jnp.roll(U, -1, axis=0), -1, axis=1)  # u_{i+1,j+1}
-        u_ip1_jm1 = jnp.roll(jnp.roll(U, -1, axis=0), 1, axis=1)  # u_{i+1,j-1}
-        u_im1_jp1 = jnp.roll(jnp.roll(U, 1, axis=0), -1, axis=1)  # u_{i-1,j+1}
-        u_im1_jm1 = jnp.roll(jnp.roll(U, 1, axis=0), 1, axis=1)  # u_{i-1,j-1}
+        # u_ip1_jp1 = jnp.roll(jnp.roll(U, -1, axis=0), -1, axis=1)  # u_{i+1,j+1}
+        # u_ip1_jm1 = jnp.roll(jnp.roll(U, -1, axis=0), 1, axis=1)  # u_{i+1,j-1}
+        # u_im1_jp1 = jnp.roll(jnp.roll(U, 1, axis=0), -1, axis=1)  # u_{i-1,j+1}
+        # u_im1_jm1 = jnp.roll(jnp.roll(U, 1, axis=0), 1, axis=1)  # u_{i-1,j-1}
+        #
+        # u_xy = (u_ip1_jp1 - u_ip1_jm1 - u_im1_jp1 + u_im1_jm1) / (4 * self.hx * self.hy)
 
-        u_xy = (u_ip1_jp1 - u_ip1_jm1 - u_im1_jp1 + u_im1_jm1) / (4 * self.hx * self.hy)
-
-        Delta_U = - (4 * U - UR - UL - UR_y - UL_y) / (self.hx ** 2)
+        Delta_U = (-2 * U + UR + UL) / (self.hx ** 2) + (-2 * U + UR_y + UL_y) / (self.hy ** 2)
 
         Ux = (UR - UL) / (2 * self.hx)
         Uy = (UR_y - UL_y) / (2 * self.hy)
@@ -91,10 +92,9 @@ class OnePopulationalMFG(object):
         Mx = (MR - ML) / (2 * self.hx)
         My = (MR_y - ML_y) / (2 * self.hy)
 
-        # Ensure that the multiplication doesn't lead to NaN or inf by using jnp.clip
         val = -(jnp.multiply(M, Delta_U) +
-                2 * jnp.multiply(M, u_xy) +
-                jnp.multiply((Mx + My), (Ux + Uy)))
+                jnp.multiply(Ux, Mx) +
+                jnp.multiply(Uy, My))
 
         return val
 
@@ -104,7 +104,7 @@ class OnePopulationalMFG(object):
         UR_y = jnp.roll(Uk, -1, axis=1)
         UL_y = jnp.roll(Uk, 1, axis=1)
 
-        Delta_U = - (4 * Uk - UR - UL - UR_y - UL_y) / (self.hx ** 2)
+        Delta_U = - (2 * Uk - UR - UL) / (self.hx ** 2) - (2 * Uk - UR_y - UL_y) / (self.hy ** 2)
 
         Dt_U = (Uk1 - Uk) / self.dt
 
@@ -120,7 +120,7 @@ class OnePopulationalMFG(object):
         Mk1R_y = jnp.roll(Mk1, -1, axis=1)
         Mk1L_y = jnp.roll(Mk1, 1, axis=1)
 
-        Delta_M = - (4 * Mk1 - Mk1R - Mk1L - Mk1R_y - Mk1L_y) / (self.hx ** 2)
+        Delta_M = - (2 * Mk1 - Mk1R - Mk1L) / (self.hx ** 2) - (2 * Mk1 - Mk1R_y - Mk1L_y) / (self.hy ** 2)
         adj = self.fp_linearized_part(Uk, Mk1)
 
         return Dt_M - self.nu * Delta_M + adj
@@ -212,10 +212,10 @@ class OnePopulationalMFG(object):
 cfg = munch.munchify({
     'T': 1,
     'Nt': 10,
-    'xl': -5,
-    'xr': 5,
-    'yl': -5,
-    'yr': 5,
+    'xl': -6,
+    'xr': 6,
+    'yl': -6,
+    'yr': 6,
     'N': 30,
     'M': 30,
     'nu': 1,
@@ -224,8 +224,8 @@ cfg = munch.munchify({
     'hjb_epoch': 100,
     'hjb_lr': 1,
     'epoch': 100,
-    'lr': 1,
-    'tol': 10 ** (-8),
+    'lr': 0.8,
+    'tol': 10 ** (-7),
 })
 
 solver = OnePopulationalMFG(cfg.T, cfg.Nt, cfg.xl, cfg.xr, cfg.yl, cfg.yr, cfg.N, cfg.M, cfg.nu, cfg.alpha, cfg.eps)
@@ -237,7 +237,6 @@ TT, XX, YY = jnp.meshgrid(TT, XX, YY)
 
 # Solve to get U and M
 U, M = solver.solve(cfg.tol, cfg.epoch, cfg.hjb_lr, cfg.hjb_epoch)
-
 # Create the 3D plot for m0
 fig = plt.figure(figsize=(12, 8))
 ax = fig.add_subplot(111, projection='3d')
@@ -290,7 +289,6 @@ ax.set_box_aspect([1, 1, 0.5])  # Aspect ratio is 1:1:0.5
 plt.tight_layout()  # Adjust layout to fit all elements
 plt.show()
 
-# Define time steps to visualize
 time_steps = range(cfg.Nt + 1)  # Visualize all time steps
 
 z_min = jnp.min(M)
@@ -298,6 +296,25 @@ z_max = jnp.max(M)
 
 fig = plt.figure(figsize=(12, 8))
 ax = fig.add_subplot(111, projection='3d')
+
+
+# Find the indices of the maximum value in M[t, :, :]
+def find_peak(t):
+    # Flatten the arrays and find the peak in the flattened data
+    M_flat = M[t, :, :].flatten()
+    XX_flat = XX[:, -1, :].flatten()
+    YY_flat = YY[:, -1, :].flatten()
+
+    max_idx = jnp.argmax(M_flat)
+
+    x_peak = XX_flat[max_idx]
+    y_peak = YY_flat[max_idx]
+    z_peak = M_flat[max_idx]
+
+    # Debugging: Print the peak values
+    print(f"Peak coordinates at t={t}: x={x_peak}, y={y_peak}, z={z_peak}")
+
+    return x_peak, y_peak, z_peak
 
 
 def update_plot(t):
@@ -318,10 +335,22 @@ def update_plot(t):
     # Set a fixed aspect ratio
     ax.set_box_aspect([1, 1, 0.5])  # Aspect ratio is 1:1:0.5
 
+    # Find and plot the peak
+    x_peak, y_peak, z_peak = find_peak(t)
+    ax.scatter([x_peak], [y_peak], [z_peak], color='red', s=50, label="Peak")
+
+    # Annotate the peak values on the plot
+    ax.text(x_peak, y_peak, z_peak, f"({x_peak:.2f}, {y_peak:.2f}, {z_peak:.2f})",
+            color='black', fontsize=10, ha='center', va='bottom', weight='bold')
+
+    ax.legend()
+
+    # Optionally, print the coordinates of the peak
+    print(f"At t={t}: Peak at x={x_peak}, y={y_peak}, z={z_peak}")
+
 
 ani = FuncAnimation(fig, update_plot, frames=range(cfg.Nt + 1), repeat=False)
 
-# To save the animation as a GIF file
-ani.save('distribution_evolution.gif', writer='imagemagick', dpi=80)
+ani.save('plot2.gif', writer='pillow', dpi=80)
 
 plt.show()

@@ -2,6 +2,7 @@ import jax.numpy as jnp
 from jax import vmap, jacfwd
 from jax.scipy.stats import norm
 import munch
+import jax
 from scipy.linalg import solve
 from scipy.linalg import lstsq
 from matplotlib import cm
@@ -39,9 +40,9 @@ class OnePopulationalMFG(object):
         self.alpha = alpha
         self.hx = (xr - xl) / N
         self.hy = (yr - yl) / M
-        self.XX = jnp.linspace(xl, xr, N, endpoint=False)
-        self.YY = jnp.linspace(yl, yr, M, endpoint=False)
-        self.XX, self.YY = jnp.meshgrid(self.XX, self.YY)
+        self.XX = jax.device_put(jnp.linspace(xl, xr, N, endpoint=False), device=jax.devices("gpu")[0])
+        self.YY = jax.device_put(jnp.linspace(yl, yr, M, endpoint=False), device=jax.devices("gpu")[0])
+        self.XX, self.YY = jax.device_put(jnp.meshgrid(self.XX, self.YY), device=jax.devices("gpu")[0])
         self.eps = eps
 
     def m0(self, x, y):
@@ -77,12 +78,6 @@ class OnePopulationalMFG(object):
         MR_y = jnp.roll(M, -1, axis=1)  # M shifted up (j+1)
         ML_y = jnp.roll(M, 1, axis=1)  # M shifted down (j-1)
 
-        # u_ip1_jp1 = jnp.roll(jnp.roll(U, -1, axis=0), -1, axis=1)  # u_{i+1,j+1}
-        # u_ip1_jm1 = jnp.roll(jnp.roll(U, -1, axis=0), 1, axis=1)  # u_{i+1,j-1}
-        # u_im1_jp1 = jnp.roll(jnp.roll(U, 1, axis=0), -1, axis=1)  # u_{i-1,j+1}
-        # u_im1_jm1 = jnp.roll(jnp.roll(U, 1, axis=0), 1, axis=1)  # u_{i-1,j-1}
-        #
-        # u_xy = (u_ip1_jp1 - u_ip1_jm1 - u_im1_jp1 + u_im1_jm1) / (4 * self.hx * self.hy)
 
         Delta_U = (-2 * U + UR + UL) / (self.hx ** 2) + (-2 * U + UR_y + UL_y) / (self.hy ** 2)
 
@@ -187,8 +182,8 @@ class OnePopulationalMFG(object):
         return M[0]
 
     def solve(self, tol=10**(-6), epoch=100, hjb_lr = 1, hjb_epoch = 100):
-        U = jnp.zeros((self.Nt, self.N, self.M)).flatten()
-        M = jnp.zeros((self.Nt, self.N, self.M)).flatten()
+        U = jax.device_put(jnp.zeros((self.Nt, self.N, self.M)).flatten(), device=jax.devices("gpu")[0])
+        M = jax.device_put(jnp.zeros((self.Nt, self.N, self.M)).flatten(), device=jax.devices("gpu")[0])
         error = 1
         iter_num = 0
         while error > tol and iter_num < epoch:
@@ -230,10 +225,11 @@ cfg = munch.munchify({
 
 solver = OnePopulationalMFG(cfg.T, cfg.Nt, cfg.xl, cfg.xr, cfg.yl, cfg.yr, cfg.N, cfg.M, cfg.nu, cfg.alpha, cfg.eps)
 
-TT = jnp.linspace(0, cfg.T, cfg.Nt + 1)
-XX = jnp.linspace(cfg.xl, cfg.xr, cfg.N, endpoint=False)
-YY = jnp.linspace(cfg.yl, cfg.yr, cfg.M, endpoint=False)
+TT = jax.device_put(jnp.linspace(0, cfg.T, cfg.Nt + 1), device=jax.devices("gpu")[0])
+XX = jax.device_put(jnp.linspace(cfg.xl, cfg.xr, cfg.N, endpoint=False), device=jax.devices("gpu")[0])
+YY = jax.device_put(jnp.linspace(cfg.yl, cfg.yr, cfg.M, endpoint=False), device=jax.devices("gpu")[0])
 TT, XX, YY = jnp.meshgrid(TT, XX, YY)
+
 
 # Solve to get U and M
 U, M = solver.solve(cfg.tol, cfg.epoch, cfg.hjb_lr, cfg.hjb_epoch)

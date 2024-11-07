@@ -1,48 +1,17 @@
 from jax import jacfwd, jit
 import jax.numpy as jnp
 from jax import vmap
-from jax.scipy.stats import norm, truncnorm
+from jax.scipy.stats import norm
 import numpy as np
 import matplotlib.pyplot as plt
 import munch
-import os
 
-from matplotlib.lines import Line2D
-
-os.environ["JAX_TRACEBACK_FILTERING"]="off"
-
+np.set_printoptions(precision=20)
 
 
 x_d = -2
 class OnePopulationalMFG(object):
     def __init__(self, T, Nt, xl, xr, N, nu, alpha, eps):
-        """
-        Input:
-
-        T:          float
-                the terminal time
-
-        Nt:         integer
-                the number of time intervals
-
-        xl:         float
-                the left boundary of the interval
-
-        xr:         float
-                the right boundary of the interval
-
-        N:          integer
-                the number of intervals
-
-        nu:         float
-                the viscosity constant
-
-        alpha:      float
-                the coefficient of the susceptibility of the population
-
-        eps:        float
-                define the closeness of agents
-        """
         self.T = T
         self.Nt = Nt
         self.dt = T / Nt
@@ -52,32 +21,39 @@ class OnePopulationalMFG(object):
         self.nu = nu
         self.alpha = alpha
         self.X = jnp.linspace(xl, xr, N, endpoint=False)
-        self.h = (xr - xl) / N
+        self.h = (xr - xl) / (N-1)
         self.eps = eps
 
     def m0(self, x):
-        #return jnp.ones(x.shape) / (self.xr - self.xl) # we impose the uniform distribution on [-1, 1]
+        midpoint = (self.xr + self.xl) / 2
+        sigma_mu = 1
+        normalization = norm.cdf(self.xr, loc=midpoint, scale=sigma_mu) - norm.cdf(self.xl, loc=midpoint, scale=sigma_mu)
+        pdf_values = norm.pdf(x, loc=midpoint, scale=sigma_mu) / normalization
 
-        # midpoint = (self.xr + self.xl) / 2
-        midpoint = 0.5
-        sigma_mu = 1  # Define your standard deviation
-        return truncnorm.pdf(x, loc=midpoint, a=-5, b=5, scale=sigma_mu)
+        pdf_values = jnp.where((x >= self.xl) & (x <= self.xr), pdf_values, 0.0)
+
+        return pdf_values
 
     def uT(self, x):
-        return (x - x_d) ** 2  # we suppose that every agent prefers to zero opinion
+        return (x - x_d) ** 2
 
     def r(self, x, m):
-        return 1 / (jnp.sum(vmap(lambda y: self.phi(x, y))(self.X)*m) +1e-10)/self.N
+        kernel_sum = jnp.sum(vmap(lambda y, m_y: self.phi(x, y) * m_y)(self.X, m)) *self.h
+
+        return 1 / (kernel_sum + 1e-12)
+
 
     def phi(self, x, y):
         dist = jnp.minimum(jnp.abs(x - y), self.eps)
-        res = jnp.exp(1 - self.eps**2 / (1e-40 + self.eps**2 - dist**2))  #add a small number to prevent from dividing by zero
+
+        res = jnp.exp(1 - self.eps**2 / (1e-40 + self.eps**2 - dist**2))
         return res
 
     def b(self, x, m):
-        interaction = jnp.sum(vmap(lambda y: self.phi(x, y))(self.X) * self.X * m) / self.N
+        interaction = jnp.sum(vmap(lambda y, m_y: self.phi(x, y) * y * m_y)(self.X, m)) * self.h
 
-        return self.alpha* x - self.alpha * self.r(x, m) * interaction
+        return self.alpha * x - (1 - self.alpha) * self.r(x, m) * interaction
+        # return self.alpha * self.r(x) * interaction
 
     def g(self, x, q1, q2, m):
         p1 = jnp.minimum(q1, 0)
@@ -165,17 +141,6 @@ class OnePopulationalMFG(object):
         return Dt_M - self.nu * Delta_M + adj
 
     def hjb_sys(self, U, M):
-        """
-        Input:
-
-        U:      matrix
-            (Nt + 1) x N matrix, each row contains the values of U at the grid points
-            the first row represents the time 0 and the last row contains the data at time T
-
-        M:      matrix
-            (Nt + 1) x N matrix, each row contains the values of M at the grid points
-            the first row represents the time 0 and the last row contains the data at time T
-        """
         ts = jnp.linspace(0, self.T, self.Nt + 1)
         hjbs = vmap(self.hjb)(ts[:-1], U[1:, :], U[:-1, :], M[1:, :])
 
@@ -253,7 +218,7 @@ class OnePopulationalMFG(object):
 
             error = jnp.dot(Uerr, Uerr) + jnp.dot(Merr, Merr)
             print('the mfg error is {}'.format(error))
-
+            print("Iteration: {}".format(iter_num))
             iter_num = iter_num + 1
 
             U = U1
@@ -263,77 +228,92 @@ class OnePopulationalMFG(object):
         return U, M
 
 cfg = munch.munchify({
-    'T' : 6,
+    'T' : 1,
     'Nt': 70,
-    'xl': -10,
-    'xr': 10,
-    'N' : 60,
-    'nu': 0.5,
-    'alpha': 0.3,
+    'xl': -5,
+    'xr': 5,
+    'N' : 70,
+    'nu': 1,
+    'alpha': 0.5,
     'eps': 1,
-    'hjb_epoch': 100,
+    'hjb_epoch': 50,
     'hjb_lr': 1,
-    'epoch': 100,
+    'epoch': 50,
     'lr': 1,
     'tol' : 10 ** (-4),
 })
 
-dt = cfg.T / cfg.Nt
-dx = (cfg.xr-cfg.xl)/cfg.N
-if  (2* cfg.nu * dt)< dx**2:
-    solver = OnePopulationalMFG(cfg.T, cfg.Nt, cfg.xl, cfg.xr, cfg.N, cfg.nu, cfg.alpha, cfg.eps)
 
-    TT = jnp.linspace(0, cfg.T, cfg.Nt + 1)
-    XX = jnp.linspace(cfg.xl, cfg.xr, cfg.N, endpoint=False)
-    TT, XX = jnp.meshgrid(TT, XX)
+solver = OnePopulationalMFG(cfg.T, cfg.Nt, cfg.xl, cfg.xr, cfg.N, cfg.nu, cfg.alpha, cfg.eps)
 
-    U, M = solver.solve(cfg.tol, cfg.epoch, cfg.hjb_lr, cfg.hjb_epoch)
+TT = jnp.linspace(0, cfg.T, cfg.Nt + 1)
+XX = jnp.linspace(cfg.xl, cfg.xr, cfg.N, endpoint=False)
+TT, XX = jnp.meshgrid(TT, XX)
 
-    TT = jnp.linspace(0, cfg.T, cfg.Nt + 1)
-    XX = jnp.linspace(-10, 10, cfg.N, endpoint=False)
-    # TT, XX = jnp.meshgrid(TT, XX_l)
 
-    # Plot for U[-1, :]
-    fig = plt.figure()
-    plt.plot(XX, U[-1, :])
-    plt.xlabel(r"$x$")
-    plt.ylabel(r"$u(T)$")
-    plt.title("Final Value Function $u(T)$")
+U, M = solver.solve(cfg.tol, cfg.epoch, cfg.hjb_lr, cfg.hjb_epoch)
 
-    # Plot for M[-1, :] with a vertical line at x_d
-    fig = plt.figure()
-    plt.plot(XX, M[0, :], label=r"Initial Distribution")
-    plt.plot(XX, M[-1, :], label=r"Final Distribution")
+# Save the control U and density M to files
+np.save('control_U.npy', U)
+np.save('density_M.npy', M)
 
-    # param_legend = [Line2D([0], [0], color='none', label=r"$\alpha=\frac{1}{2}, \varepsilon=1$")]
-    plt.axvline(x=x_d, color='r', linestyle='--', label=r"Desired opinion $x_{d}$=" + f'{x_d}')
+print("Control and density saved successfully.")
 
-    plt.xlabel(r"$x$")
-    plt.ylabel(r"$m(T)$")
-    plt.title(r"$\alpha=" +f"{cfg.alpha}" +r"\varepsilon=$" +f"{cfg.eps}$")
-    plt.savefig("one_populational.png", dpi=300)
-    plt.legend()
-    # plt.legend(handles=param_legend, loc='upper left')
-    plt.show()
+TT = jnp.linspace(0, cfg.T, cfg.Nt + 1)
+XX = jnp.linspace(-8, 8, cfg.N, endpoint=False)
+TT, XX = jnp.meshgrid(TT, XX)
 
-# # 3D surface plot for U
-# fig = plt.figure()
-# ax = fig.add_subplot(111, projection='3d')
-# surf = ax.plot_surface(TT.T, XX.T, U, cmap='viridis')
-# fig.colorbar(surf, label=r"$u$", pad=0.1)
-# ax.set_title("Surface Plot of $u$")
-# ax.set_xlabel(r"$t$")
-# ax.set_ylabel(r"$x$")
-# ax.set_zlabel(r"$u$")
+# Plot for U[-1, :]
+fig = plt.figure()
+plt.plot(XX, U[-1, :])
+plt.xlabel(r"$x$")
+plt.ylabel(r"$u(T)$")
+plt.title("Final Value Function $u(T)$")
 
-# 3D surface plot for M
-# fig = plt.figure()
-# ax = fig.add_subplot(111, projection='3d')
-# surf = ax.plot_surface(TT.T, XX.T, M, cmap='viridis')
-# fig.colorbar(surf, label=r"$m$", pad=0.1)
-# ax.set_title("Surface Plot of $m$")
-# ax.set_xlabel(r"$t$")
-# ax.set_ylabel(r"$x$")
-# ax.set_zlabel(r"$m$")
+fig = plt.figure()
+plt.plot(XX, M[0, :])
+plt.axvline(x=x_d, color='r', linestyle='--', label=r"Line at $x_{d}$="+f'{x_d}')
+plt.xlabel(r"$x$")
+plt.ylabel(r"$m(T)$")
+# plt.title("Final Distribution $m(T)$")
+plt.savefig("one_populational_init.png", dpi=300)
+plt.legend()
 
-# plt.show()
+fig = plt.figure()
+plt.plot(XX, M[34, :])
+plt.axvline(x=x_d, color='r', linestyle='--', label=r"Line at $x_{d}$="+f'{x_d}')
+plt.xlabel(r"$x$")
+plt.ylabel(r"$m(T)$")
+# plt.title("Final Distribution $m(T)$")
+plt.savefig("one_populational_inter.png", dpi=300)
+plt.legend()
+
+# Plot for M[-1, :] with a vertical line at x_d
+fig = plt.figure()
+plt.plot(XX, M[-1, :])
+plt.axvline(x=x_d, color='r', linestyle='--', label=r"Line at $x_{d}$="+f'{x_d}')
+plt.xlabel(r"$x$")
+plt.ylabel(r"$m(T)$")
+# plt.title("Final Distribution $m(T)$")
+plt.savefig("one_populational.png", dpi=300)
+plt.legend()
+
+fig = plt.figure()
+ax = fig.add_subplot(111, projection='3d')
+surf = ax.plot_surface(TT.T, XX.T, U, cmap='viridis')
+fig.colorbar(surf, label=r"$u$", pad=0.1)
+ax.set_title("Surface Plot of $u$")
+ax.set_xlabel(r"$t$")
+ax.set_ylabel(r"$x$")
+ax.set_zlabel(r"$u$")
+
+fig = plt.figure()
+ax = fig.add_subplot(111, projection='3d')
+surf = ax.plot_surface(TT.T, XX.T, M, cmap='viridis')
+fig.colorbar(surf, label=r"$m$", pad=0.1)
+ax.set_title("Surface Plot of $m$")
+ax.set_xlabel(r"$t$")
+ax.set_ylabel(r"$x$")
+ax.set_zlabel(r"$m$")
+
+plt.show()

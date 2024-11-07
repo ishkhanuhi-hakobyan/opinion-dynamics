@@ -3,10 +3,14 @@ from jax import jacfwd, vmap, jit
 from jax.scipy.stats import norm
 import matplotlib.pyplot as plt
 import munch
+import os
 import numpy as np
 
-x_d1 = -1.5
-x_d3 = 1
+x_d1 = -2
+x_d3 = 2
+
+os.environ["JAX_TRACEBACK_FILTERING"]="off"
+# os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"]="platform"
 
 class ThreePopulationMFG(object):
     def __init__(self, T, Nt, xl, xr, N, nu, alphas, sigmas, lambdas, eps):
@@ -30,7 +34,7 @@ class ThreePopulationMFG(object):
         if population_index == 0:
             # return jnp.ones(x.shape) / (self.xr - self.xl)
             midpoint = (self.xr + self.xl) / 2
-            sigma_mu = 1  # Define your standard deviation
+            sigma_mu = 1.5 # Define your standard deviation
             return norm.pdf(x, loc=midpoint, scale=sigma_mu)
         elif population_index == 1:
             # midpoint = (self.xr + self.xl) / 2
@@ -85,13 +89,25 @@ class ThreePopulationMFG(object):
         M = M.at[0, :].set(M0)
         return U, M
 
+    def wasserstein_1(self, x, y):
+        x = x / jnp.sum(x)
+        y = y / jnp.sum(y)
+
+        # Compute the cumulative distribution functions
+        cdf_x = jnp.cumsum(x)
+        cdf_y = jnp.cumsum(y)
+
+        # Compute the Wasserstein-1 distance (L1 norm between the CDFs)
+        w1_distance = jnp.sum(jnp.abs(cdf_x - cdf_y))
+
+        return w1_distance
+
     def K_d(self, x, y, sigma):
-        mu_k_t_cumsum = jnp.cumsum(x)
-        mu_r_t_cumsum = jnp.cumsum(y)
+        w_p = self.wasserstein_1(x, y)
 
-        w_p = jnp.sum(jnp.abs(mu_k_t_cumsum - mu_r_t_cumsum))
+        kernel_values = jnp.where(w_p <= sigma, jnp.exp(-w_p), 0)
 
-        return jnp.where(w_p <= sigma, jnp.exp(-w_p), 0.0)
+        return kernel_values
 
 
     def G_m(self, x, mu, population_index):
@@ -114,15 +130,15 @@ class ThreePopulationMFG(object):
         for r, lambda_r in enumerate(self.lambdas):
             mu_r = mu[r]
             K_d_value = self.K_d(mu[population_index], mu_r, sigma_k)
-            # if (population_index == 0 and r == 2) or (population_index == 2 and r == 0):
-            #     K_d_value = 0
+            if (population_index == 0 and r == 2) or (population_index == 2 and r == 0):
+                K_d_value = 0
             psi_values = vmap(lambda y: self.psi(x, y, lambda_r, K_d_value) * y)(self.x_grid)
 
             integral_approximation = jnp.sum(psi_values) / self.N
             interaction_term += lambda_r  * integral_approximation * K_d_value
 
         # Calculate G_M
-        G_M_value = alpha_k * interaction_term
+        G_M_value = -alpha_k * x + alpha_k * interaction_term
 
         return G_M_value
 
@@ -298,23 +314,21 @@ np.set_printoptions(precision=20)
 
 cfg = munch.munchify({
     'T' : 1,
-    'Nt': 60,
+    'Nt': 45,
     'xl': -6,
     'xr': 6,
-    'N' : 50,
+    'N' : 65,
     'nu': 1,
-    'alphas': [1, 1, 1],
-    'sigmas': [2, 1, 1],
-    'lambdas':[0.6, 0.2, 0.2],
-    'eps': 0.5,
+    'alphas': [0.5, 0.5, 0.5],
+    'sigmas': [0.5, 2, 0.5],
+    'lambdas':[1/3, 1/3, 1/3],
+    'eps': 1,
     'hjb_epoch': 200,
     'hjb_lr': 1,
     'epoch': 150,
-    'lr': 0.7,
+    'lr': 0.8,
     'tol' : 10 ** (-6),
 })
-
-#T, Nt, xl, xr, N, nu, alphas, sigmas, lambdas, eps
 
 solver = ThreePopulationMFG(T=cfg.T, Nt=cfg.Nt, xl=cfg.xl, xr=cfg.xr, N=cfg.N, nu=cfg.nu, alphas=cfg.alphas, sigmas=cfg.sigmas, lambdas=cfg.lambdas, eps=cfg.eps)
 
@@ -342,11 +356,37 @@ plt.show()
 
 # Final distribution for both populations
 plt.figure()
+plt.plot(XX, M1[0, :], label="Pop. 1")
+plt.plot(XX, M2[0, :], label="Pop. 2")
+plt.plot(XX, M3[0, :], label="Pop. 3")
+# plt.axvline(x=x_d1, color='Blue', linestyle='--', linewidth=1, label=r'Line at $x_{d1}=$' + f'{x_d1}')
+# plt.axvline(x=x_d3, color='Green', linestyle='--', linewidth=1, label=r'Line at $x_{d1}=$' + f'{x_d3}')
+plt.xlabel('x')
+plt.ylabel('m(T)')
+plt.legend()
+plt.savefig("final_good.png", dpi=300)
+plt.show()
+
+# Final distribution for both populations
+plt.figure()
+plt.plot(XX, M1[30, :], label="Pop. 1")
+plt.plot(XX, M2[30, :], label="Pop. 2")
+plt.plot(XX, M3[30, :], label="Pop. 3")
+plt.axvline(x=x_d1, color='Blue', linestyle='--', linewidth=1, label=r'Desired opinion $x_{d1}=$' + f'{x_d1}')
+plt.axvline(x=x_d3, color='Green', linestyle='--', linewidth=1, label=r'Desired opinion $x_{d1}=$' + f'{x_d3}')
+plt.xlabel('x')
+plt.ylabel('m(T)')
+plt.legend()
+plt.savefig("final_good.png", dpi=300)
+plt.show()
+
+# Final distribution for both populations
+plt.figure()
 plt.plot(XX, M1[-1, :], label="Pop. 1")
 plt.plot(XX, M2[-1, :], label="Pop. 2")
 plt.plot(XX, M3[-1, :], label="Pop. 3")
-plt.axvline(x=x_d1, color='Blue', linestyle='--', linewidth=1, label=r'Line at $x_{d1}=$' + f'{x_d1}')
-plt.axvline(x=x_d3, color='Green', linestyle='--', linewidth=1, label=r'Line at $x_{d1}=$' + f'{x_d3}')
+plt.axvline(x=x_d1, color='Blue', linestyle='--', linewidth=1, label=r'Desired opinion $x_{d1}=$' + f'{x_d1}')
+plt.axvline(x=x_d3, color='Green', linestyle='--', linewidth=1, label=r'Desired opinion $x_{d1}=$' + f'{x_d3}')
 plt.xlabel('x')
 plt.ylabel('m(T)')
 plt.legend()
@@ -354,62 +394,62 @@ plt.savefig("final_good.png", dpi=300)
 plt.show()
 
 # 3D surface plot for value function U1
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-X, Y = np.meshgrid(XX, TT)
-ax.plot_surface(X, Y, U1, cmap='viridis')
-ax.set_title('U1 over Time and Space')
-ax.set_xlabel('x')
-ax.set_ylabel('t')
-ax.set_zlabel('U1')
-plt.show()
+# fig = plt.figure()
+# ax = fig.add_subplot(111, projection='3d')
+# X, Y = np.meshgrid(XX, TT)
+# ax.plot_surface(X, Y, U1, cmap='viridis')
+# ax.set_title('U1 over Time and Space')
+# ax.set_xlabel('x')
+# ax.set_ylabel('t')
+# ax.set_zlabel('U1')
+# plt.show()
+#
+# # 3D surface plot for value function U2
+# fig = plt.figure()
+# ax = fig.add_subplot(111, projection='3d')
+# ax.plot_surface(X, Y, U2, cmap='viridis')
+# ax.set_title('U2 over Time and Space')
+# ax.set_xlabel('x')
+# ax.set_ylabel('t')
+# ax.set_zlabel('U2')
+# plt.show()
+#
+# # 3D surface plot for value function U3
+# fig = plt.figure()
+# ax = fig.add_subplot(111, projection='3d')
+# ax.plot_surface(X, Y, U3, cmap='viridis')
+# ax.set_title('U3 over Time and Space')
+# ax.set_xlabel('x')
+# ax.set_ylabel('t')
+# ax.set_zlabel('U3')
+# plt.show()
+#
+#
+# # 3D surface plot for distribution M1
+# fig = plt.figure()
+# ax = fig.add_subplot(111, projection='3d')
+# ax.plot_surface(X, Y, M1, cmap='viridis')
+# ax.set_title('M1 over Time and Space')
+# ax.set_xlabel('x')
+# ax.set_ylabel('t')
+# ax.set_zlabel('M1')
+# plt.show()
 
-# 3D surface plot for value function U2
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-ax.plot_surface(X, Y, U2, cmap='viridis')
-ax.set_title('U2 over Time and Space')
-ax.set_xlabel('x')
-ax.set_ylabel('t')
-ax.set_zlabel('U2')
-plt.show()
-
-# 3D surface plot for value function U3
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-ax.plot_surface(X, Y, U3, cmap='viridis')
-ax.set_title('U3 over Time and Space')
-ax.set_xlabel('x')
-ax.set_ylabel('t')
-ax.set_zlabel('U3')
-plt.show()
+# fig = plt.figure()
+# ax = fig.add_subplot(111, projection='3d')
+# ax.plot_surface(X, Y, M2, cmap='viridis')
+# ax.set_title('M2 over Time and Space')
+# ax.set_xlabel('x')
+# ax.set_ylabel('t')
+# ax.set_zlabel('M2')
+# plt.show()
 
 
-# 3D surface plot for distribution M1
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-ax.plot_surface(X, Y, M1, cmap='viridis')
-ax.set_title('M1 over Time and Space')
-ax.set_xlabel('x')
-ax.set_ylabel('t')
-ax.set_zlabel('M1')
-plt.show()
-
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-ax.plot_surface(X, Y, M2, cmap='viridis')
-ax.set_title('M2 over Time and Space')
-ax.set_xlabel('x')
-ax.set_ylabel('t')
-ax.set_zlabel('M2')
-plt.show()
-
-
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-ax.plot_surface(X, Y, M3, cmap='viridis')
-ax.set_title('M3 over Time and Space')
-ax.set_xlabel('x')
-ax.set_ylabel('t')
-ax.set_zlabel('M3')
-plt.show()
+# fig = plt.figure()
+# ax = fig.add_subplot(111, projection='3d')
+# ax.plot_surface(X, Y, M3, cmap='viridis')
+# ax.set_title('M3 over Time and Space')
+# ax.set_xlabel('x')
+# ax.set_ylabel('t')
+# ax.set_zlabel('M3')
+# plt.show()

@@ -1,14 +1,13 @@
 import jax.numpy as jnp
-from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
 import matplotlib.pyplot as plt
 from jax import jacfwd, vmap
-from jax.scipy.stats import norm
+from jax.scipy.stats import norm, truncnorm
 import munch
-import plotly.graph_objects as go
-x_d1 = 1
-x_d2 = -1.5
-
+import os
+x_d1 = 2
+x_d2 = -2
+os.environ["JAX_TRACEBACK_FILTERING"]="off"
 
 class TwoPopulationMFG(object):
     def __init__(self, T, Nt, xl, xr, N, nu, alphas, sigmas, lambdas, eps):
@@ -30,15 +29,15 @@ class TwoPopulationMFG(object):
 
     def mu0(self, x, population_index): # uncomment the commented 3 lines in both if and else statements to have initial normal distribution
         if population_index == 0:
-            # return jnp.ones(x.shape) / (self.xr - self.xl)
-            midpoint = (self.xr + self.xl) / 2
-            sigma_mu = 1  # Define your standard deviation
-            return norm.pdf(x, loc=midpoint, scale=sigma_mu)
+            midpoint = 0
+            sigma_mu = 1
+
+            return truncnorm.pdf(x, a = -5, b=5, loc=midpoint, scale=sigma_mu)
         elif population_index == 1:
-            midpoint = (self.xr + self.xl) / 2
-            sigma_mu = 1  # Define your standard deviation
-            return norm.pdf(x, loc=midpoint, scale=sigma_mu)
-            # return jnp.ones(x.shape) / (self.xr - self.xl)
+            midpoint = 0
+            sigma_mu = 2
+
+            return truncnorm.pdf(x, a = -5, b=5, loc=midpoint, scale=sigma_mu)
 
     def uT(self, x, population_index):
         if population_index == 0:
@@ -48,10 +47,10 @@ class TwoPopulationMFG(object):
 
 
     def local_kernel(self, x, y):
-        # Calculate the Euclidean distance between two points
-        distance = jnp.linalg.norm(x - y)
-        # Return 1 if the distance is less than or equal to epsilon, else return 0
-        return jnp.where(distance <= self.eps, 1, 0)
+        dist = jnp.abs(x - y)
+
+        res = jnp.exp(1 - self.eps ** 2 / (1e-12 + self.eps ** 2 - dist ** 2))
+        return res
 
     def psi(self, Xtk, y, lambda_r, mu_k_t, mu_r_t, sigma_k):
         numerator = self.local_kernel(Xtk, y)
@@ -61,13 +60,12 @@ class TwoPopulationMFG(object):
 
         distances = self.K_d(mu_k_t, mu_r_t, sigma_k)
         # distances = 0
-        # Sum over the integral term, which we approximate with a sum over samples
 
-        integral_approx = jnp.sum(self.local_kernel(Xtk, y)) / self.N
-        denominator_terms.append(jnp.maximum(lambda_r  * integral_approx * distances, sigma_k))
+        integral_approx = jnp.sum(self.local_kernel(Xtk, y)*mu_r_t) * self.h
+        denominator_terms.append(lambda_r  * integral_approx * distances)
         denominator = jnp.sum(jnp.array(denominator_terms))
 
-        return numerator / denominator
+        return numerator / (denominator + 1e-12)
 
 
     def prolong(self, Uvec, Mvec, idx):
@@ -87,6 +85,9 @@ class TwoPopulationMFG(object):
         return U, M
 
     def K_d(self, x, y, sigma):
+        x = x / jnp.sum(x)
+        y = y / jnp.sum(y)
+
         mu_k_t_cumsum = jnp.cumsum(x)
         mu_r_t_cumsum = jnp.cumsum(y)
 
@@ -97,18 +98,6 @@ class TwoPopulationMFG(object):
         return kernel_values
 
     def G_m(self, x, mu, population_index):
-        """
-        Calculate the G_M function for a given population.
-
-        Parameters:
-        x (array): Spatial grid points.
-        mu (list of arrays): Distributions of each population.
-        population_index (int): Index of the population.
-
-        Returns:
-        array: Computed G_M values for each point in x.
-        """
-
         alpha_k = self.alphas[population_index]
         sigma_k = self.sigmas[population_index]
         # Calculate the interaction term
@@ -116,16 +105,17 @@ class TwoPopulationMFG(object):
         for r, lambda_r in enumerate(self.lambdas):
             mu_r = mu[r]
             K_d_value = self.K_d(mu[population_index], mu_r, sigma_k)
-            # K_d_value = 0
-            psi_values = vmap(lambda y: self.psi(x, y, lambda_r, mu[population_index], mu_r, sigma_k) * y)(self.x_grid)
+            K_d_value = 0
+            psi_values = vmap(lambda y: self.psi(x, y, lambda_r, mu[population_index], mu_r, sigma_k) * y * mu_r)(self.x_grid)
 
 
             # Approximate the integral as the sum of areas of rectangles
-            integral_approximation = jnp.sum(psi_values) / self.N
+            integral_approximation = jnp.sum(psi_values) * self.h
             interaction_term += lambda_r  * integral_approximation * K_d_value
 
         # Calculate G_M
-        G_M_value = alpha_k * interaction_term
+        G_M_value = alpha_k * x - alpha_k * interaction_term
+        # G_M_value = alpha_k * interaction_term
 
         return G_M_value
 
@@ -203,7 +193,7 @@ class TwoPopulationMFG(object):
         return MEQByHands
 
 
-    def solve_hjb(self, U0, M, lr, idx, tol=10**(-6), epoch=100):
+    def solve_hjb(self, U0, M, lr, idx, tol=10**(-7), epoch=50):
         error = 1
         iter_num = 0
 
@@ -284,6 +274,7 @@ class TwoPopulationMFG(object):
 
             U1, U2, M1, M2 = new_U1, new_U2, new_M1, new_M2
             iter_num += 1
+            print("Iteration: {}".format(iter_num))
 
         U1, M1 = self.prolong(U1, M1, 0)
         U2, M2 = self.prolong(U2, M2, 1)
@@ -292,21 +283,21 @@ class TwoPopulationMFG(object):
 
 
 cfg = munch.munchify({
-    'T' : 1,
-    'Nt': 60,
-    'xl': -5,
-    'xr': 5,
-    'N' : 50,
-    'nu': 1,
-    'alphas': [0.6, 0.4],
+    'T' : 7,
+    'Nt': 50,
+    'xl': -10,
+    'xr': 10,
+    'N' : 60,
+    'nu': 0.5,
+    'alphas': [0.01, 0.01],
     'sigmas': [1, 1],
     'lambdas': [0.5, 0.5],
-    'eps': 0.8,
-    'hjb_epoch': 200,
+    'eps': 0.5,
+    'hjb_epoch': 100,
     'hjb_lr': 1,
-    'epoch': 150,
-    'lr': 0.7,
-    'tol': 10 ** (-7),
+    'epoch': 50,
+    'lr': 0.8,
+    'tol': 10 ** (-6),
 })
 
 
@@ -320,67 +311,9 @@ TT, XX = jnp.meshgrid(TT, XX)
 U1, M1, U2, M2 = solver.solve(cfg.tol, cfg.epoch, cfg.hjb_lr, cfg.hjb_epoch)
 
 
-TT = jnp.linspace(0, cfg.T, cfg.Nt +1)
-XX = jnp.linspace(-7, 7, cfg.N, endpoint=False)
-# Final value function for both populations
-fig = go.Figure()
-fig.add_trace(go.Scatter(x=XX, y=U1[-1, :], mode='lines', name='U1(T)'))
-fig.add_trace(go.Scatter(x=XX, y=U2[-1, :], mode='lines', name='U2(T)'))
-fig.update_layout(title='Final Value Function', xaxis_title='x', yaxis_title='u(T)')
-fig.show()
-
-# Final distribution for both populations
-fig = go.Figure()
-fig.add_trace(go.Scatter(x=XX, y=M1[-1, :], mode='lines', name='M1(T)'))
-fig.add_trace(go.Scatter(x=XX, y=M2[-1, :], mode='lines', name='M2(T)'))
-fig.add_shape(type="line",
-              x0=x_d1, y0=0, x1=x_d1, y1=max(max(M1[-1, :]), max(M2[-1, :])),
-              line=dict(color="Blue", width=2, dash="dash"))
-fig.add_shape(type="line",
-              x0=x_d2, y0=0, x1=x_d2, y1=max(max(M1[-1, :]), max(M2[-1, :])),
-              line=dict(color="Red", width=2, dash="dash"))
-fig.update_layout(title='Final Distribution', xaxis_title='x', yaxis_title='m(T)')
-fig.show()
-
-# 3D surface plot for value function U1
-fig = go.Figure(data=[go.Surface(z=U1, x=XX, y=TT)])
-fig.update_layout(title='U1 over Time and Space', scene=dict(
-                    xaxis_title='x',
-                    yaxis_title='t',
-                    zaxis_title='U1'))
-fig.show()
-
-# 3D surface plot for value function U2
-fig = go.Figure(data=[go.Surface(z=U2, x=XX, y=TT)])
-fig.update_layout(title='U2 over Time and Space', scene=dict(
-                    xaxis_title='x',
-                    yaxis_title='t',
-                    zaxis_title='U2'))
-fig.show()
-
-# 3D surface plot for distribution M1
-fig = go.Figure(data=[go.Surface(z=M1, x=XX, y=TT)])
-fig.update_layout(title='M1 over Time and Space', scene=dict(
-                    xaxis_title='x',
-                    yaxis_title='t',
-                    zaxis_title='M1'))
-fig.show()
-
-# 3D surface plot for distribution M2
-fig = go.Figure(data=[go.Surface(z=M2, x=XX, y=TT)])
-fig.update_layout(title='M2 over Time and Space', scene=dict(
-                    xaxis_title='x',
-                    yaxis_title='t',
-                    zaxis_title='M2'))
-fig.show()
-
-
-# ---------------------------MATPLOTLIB-------------------------------------
-
-
 # Assuming cfg, U1, U2, M1, M2, x_d1, and x_d2 are already defined
 TT = np.linspace(0, cfg.T, cfg.Nt + 1)
-XX = np.linspace(-7, 7, cfg.N, endpoint=False)
+XX = np.linspace(-10, 10, cfg.N, endpoint=False)
 
 # Final value function for both populations
 plt.figure()
@@ -402,7 +335,6 @@ plt.xlabel('x')
 plt.ylabel('m(T)')
 plt.legend(loc='upper right')  # Display the legend with subscript notation
 plt.savefig('Final_Distribution.png', format='png', dpi=300)
-
 plt.show()
 
 

@@ -5,8 +5,8 @@ from jax import jacfwd, vmap
 from jax.scipy.stats import norm, truncnorm
 import munch
 import os
-x_d1 = 2
-x_d2 = -2
+x_d1 = -2
+x_d2 = 2
 os.environ["JAX_TRACEBACK_FILTERING"]="off"
 
 class TwoPopulationMFG(object):
@@ -29,12 +29,12 @@ class TwoPopulationMFG(object):
 
     def mu0(self, x, population_index): # uncomment the commented 3 lines in both if and else statements to have initial normal distribution
         if population_index == 0:
-            midpoint = 0
+            midpoint = -1
             sigma_mu = 1
 
             return truncnorm.pdf(x, a = -5, b=5, loc=midpoint, scale=sigma_mu)
         elif population_index == 1:
-            midpoint = 0
+            midpoint = 1
             sigma_mu = 2
 
             return truncnorm.pdf(x, a = -5, b=5, loc=midpoint, scale=sigma_mu)
@@ -59,7 +59,7 @@ class TwoPopulationMFG(object):
 
 
         distances = self.K_d(mu_k_t, mu_r_t, sigma_k)
-        # distances = 0
+        distances = 0
 
         integral_approx = jnp.sum(self.local_kernel(Xtk, y)*mu_r_t) * self.h
         denominator_terms.append(lambda_r  * integral_approx * distances)
@@ -80,7 +80,7 @@ class TwoPopulationMFG(object):
 
         M0 = self.mu0(self.x_grid, idx)  # Assuming mu0 returns an array of shape (N,)
         UT = vmap(self.uT, in_axes=(0, None))(self.x_grid, idx)
-        U = U.at[self.Nt, :].set(UT)
+        # U = U.at[self.Nt, :].set(UT)
         M = M.at[0, :].set(M0)
         return U, M
 
@@ -284,12 +284,12 @@ class TwoPopulationMFG(object):
 
 cfg = munch.munchify({
     'T' : 7,
-    'Nt': 50,
+    'Nt': 30,
     'xl': -10,
     'xr': 10,
-    'N' : 60,
-    'nu': 0.5,
-    'alphas': [0.01, 0.01],
+    'N' : 70,
+    'nu': 1,
+    'alphas': [0.3, 0.3],
     'sigmas': [1, 1],
     'lambdas': [0.5, 0.5],
     'eps': 0.5,
@@ -297,7 +297,7 @@ cfg = munch.munchify({
     'hjb_lr': 1,
     'epoch': 50,
     'lr': 0.8,
-    'tol': 10 ** (-6),
+    'tol': 10 ** (-5),
 })
 
 
@@ -327,13 +327,14 @@ plt.show()
 
 # Final distribution for both populations with updated legends
 plt.figure()
-plt.plot(XX, M1[-1, :], label='Population 1')  # More descriptive name for M1(T)
-plt.plot(XX, M2[-1, :], label='Population 2')  # More descriptive name for M2(T)
-plt.axvline(x=x_d1, color='Blue', linestyle='--', linewidth=1, label=r'Line at $x_{d1}=$' + f'{x_d1}')  # LaTeX for subscript
-plt.axvline(x=x_d2, color='Red', linestyle='--', linewidth=1, label=r'Line at $x_{d2}=$' + f'{x_d2}')  # LaTeX for subscript
+plt.plot(XX, M1[-1, :], label='Pop. 1 final')  # More descriptive name for M1(T)
+plt.plot(XX, M2[-1, :], label='Pop. 2 final')  # More descriptive name for M2(T)
+plt.axvline(x=x_d1, color='Blue', linestyle='--', linewidth=1, label=r'Desired Opinion $x_{d1}=$' + f'{x_d1}')  # LaTeX for subscript
+plt.axvline(x=x_d2, color='Red', linestyle='--', linewidth=1, label=r'Desired Opinion $x_{d2}=$' + f'{x_d2}')  # LaTeX for subscript
 plt.xlabel('x')
 plt.ylabel('m(T)')
-plt.legend(loc='upper right')  # Display the legend with subscript notation
+plt.title(r"$\alpha=" +f"{cfg.alphas}" +r",\ \varepsilon=" +f"{cfg.eps}$")
+plt.legend(loc='upper left')  # Display the legend with subscript notation
 plt.savefig('Final_Distribution.png', format='png', dpi=300)
 plt.show()
 

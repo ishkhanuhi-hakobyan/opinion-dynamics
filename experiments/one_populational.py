@@ -202,7 +202,7 @@ class OnePopulationalMFG(object):
         M0 = vmap(self.m0)(self.X)
         UT = vmap(self.uT)(self.X)
 
-        U = U.at[self.Nt, :].set(UT)
+        # U = U.at[self.Nt, :].set(UT)
         M = M.at[0, :].set(M0)
         return U, M
 
@@ -263,14 +263,14 @@ class OnePopulationalMFG(object):
         return U, M
 
 cfg = munch.munchify({
-    'T' : 6,
+    'T' : 7,
     'Nt': 70,
     'xl': -10,
     'xr': 10,
     'N' : 60,
     'nu': 0.5,
-    'alpha': 0.3,
-    'eps': 1,
+    'alpha': 0.01,
+    'eps': 0.5,
     'hjb_epoch': 100,
     'hjb_lr': 1,
     'epoch': 100,
@@ -280,7 +280,7 @@ cfg = munch.munchify({
 
 dt = cfg.T / cfg.Nt
 dx = (cfg.xr-cfg.xl)/cfg.N
-if  (2* cfg.nu * dt)< dx**2:
+if  (2* cfg.nu * dt)<= dx**2:
     solver = OnePopulationalMFG(cfg.T, cfg.Nt, cfg.xl, cfg.xr, cfg.N, cfg.nu, cfg.alpha, cfg.eps)
 
     TT = jnp.linspace(0, cfg.T, cfg.Nt + 1)
@@ -310,7 +310,7 @@ if  (2* cfg.nu * dt)< dx**2:
 
     plt.xlabel(r"$x$")
     plt.ylabel(r"$m(T)$")
-    plt.title(r"$\alpha=" +f"{cfg.alpha}" +r"\varepsilon=$" +f"{cfg.eps}$")
+    plt.title(r"$\alpha=" +f"{cfg.alpha}" +r",\ \varepsilon=" +f"{cfg.eps}$")
     plt.savefig("one_populational.png", dpi=300)
     plt.legend()
     # plt.legend(handles=param_legend, loc='upper left')

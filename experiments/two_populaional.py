@@ -5,8 +5,8 @@ from jax import jacfwd, vmap
 from jax.scipy.stats import norm, truncnorm
 import munch
 import os
-x_d1 = -2
-x_d2 = 2
+x_d1 = -3
+x_d2 = 3
 os.environ["JAX_TRACEBACK_FILTERING"]="off"
 
 class TwoPopulationMFG(object):
@@ -27,17 +27,18 @@ class TwoPopulationMFG(object):
         self.eps = eps
         self.h = (xr - xl) / N
 
-    def mu0(self, x, population_index): # uncomment the commented 3 lines in both if and else statements to have initial normal distribution
+    def mu0(self, x, population_index):
+        a, b = -5, 5
         if population_index == 0:
-            midpoint = -1
+            midpoint = -0.5
             sigma_mu = 1
 
-            return truncnorm.pdf(x, a = -5, b=5, loc=midpoint, scale=sigma_mu)
+            return truncnorm.pdf(x, a =a, b=b, loc=midpoint, scale=sigma_mu)
         elif population_index == 1:
-            midpoint = 1
-            sigma_mu = 2
+            midpoint = 0.5
+            sigma_mu = 1
 
-            return truncnorm.pdf(x, a = -5, b=5, loc=midpoint, scale=sigma_mu)
+            return truncnorm.pdf(x, a =a, b=b, loc=midpoint, scale=sigma_mu)
 
     def uT(self, x, population_index):
         if population_index == 0:
@@ -59,9 +60,9 @@ class TwoPopulationMFG(object):
 
 
         distances = self.K_d(mu_k_t, mu_r_t, sigma_k)
-        distances = 0
+        # distances = 0
 
-        integral_approx = jnp.sum(self.local_kernel(Xtk, y)*mu_r_t) * self.h
+        integral_approx = jnp.sum(self.local_kernel(Xtk, y)* mu_r_t) * self.h
         denominator_terms.append(lambda_r  * integral_approx * distances)
         denominator = jnp.sum(jnp.array(denominator_terms))
 
@@ -80,18 +81,25 @@ class TwoPopulationMFG(object):
 
         M0 = self.mu0(self.x_grid, idx)  # Assuming mu0 returns an array of shape (N,)
         UT = vmap(self.uT, in_axes=(0, None))(self.x_grid, idx)
-        # U = U.at[self.Nt, :].set(UT)
+        U = U.at[self.Nt, :].set(UT)
         M = M.at[0, :].set(M0)
         return U, M
 
-    def K_d(self, x, y, sigma):
+    def wasserstein_1(self, x, y):
         x = x / jnp.sum(x)
         y = y / jnp.sum(y)
 
-        mu_k_t_cumsum = jnp.cumsum(x)
-        mu_r_t_cumsum = jnp.cumsum(y)
+        # Compute the cumulative distribution functions
+        cdf_x = jnp.cumsum(x)
+        cdf_y = jnp.cumsum(y)
 
-        w_p = jnp.sum(jnp.abs(mu_k_t_cumsum - mu_r_t_cumsum))
+        # Compute the Wasserstein-1 distance (L1 norm between the CDFs)
+        w1_distance = jnp.sum(jnp.abs(cdf_x - cdf_y))
+
+        return w1_distance
+
+    def K_d(self, x, y, sigma):
+        w_p = self.wasserstein_1(x, y)
 
         kernel_values = jnp.where(w_p <= sigma, jnp.exp(-w_p), 0)
 
@@ -105,7 +113,7 @@ class TwoPopulationMFG(object):
         for r, lambda_r in enumerate(self.lambdas):
             mu_r = mu[r]
             K_d_value = self.K_d(mu[population_index], mu_r, sigma_k)
-            K_d_value = 0
+            # K_d_value = 0
             psi_values = vmap(lambda y: self.psi(x, y, lambda_r, mu[population_index], mu_r, sigma_k) * y * mu_r)(self.x_grid)
 
 
@@ -289,14 +297,14 @@ cfg = munch.munchify({
     'xr': 10,
     'N' : 70,
     'nu': 1,
-    'alphas': [0.3, 0.3],
-    'sigmas': [1, 1],
+    'alphas': [0.01, 0.01],
+    'sigmas': [0.5, 0.5],
     'lambdas': [0.5, 0.5],
     'eps': 0.5,
     'hjb_epoch': 100,
     'hjb_lr': 1,
     'epoch': 50,
-    'lr': 0.8,
+    'lr': 1,
     'tol': 10 ** (-5),
 })
 
@@ -309,7 +317,6 @@ TT, XX = jnp.meshgrid(TT, XX)
 
 # U, M = solver.solve_mfg(cfg.lr, cfg.tol, cfg.epoch)
 U1, M1, U2, M2 = solver.solve(cfg.tol, cfg.epoch, cfg.hjb_lr, cfg.hjb_epoch)
-
 
 # Assuming cfg, U1, U2, M1, M2, x_d1, and x_d2 are already defined
 TT = np.linspace(0, cfg.T, cfg.Nt + 1)
@@ -327,6 +334,31 @@ plt.show()
 
 # Final distribution for both populations with updated legends
 plt.figure()
+plt.plot(XX, M1[15, :], label='Pop. 1 intermediate')  # More descriptive name for M1(T)
+plt.plot(XX, M2[15, :], label='Pop. 2 intermediate')  # More descriptive name for M2(T)
+
+plt.axvline(x=x_d1, color='Blue', linestyle='--', linewidth=1, label=r'Desired Opinion $x_{d1}=$' + f'{x_d1}')  # LaTeX for subscript
+plt.axvline(x=x_d2, color='Red', linestyle='--', linewidth=1, label=r'Desired Opinion $x_{d2}=$' + f'{x_d2}')  # LaTeX for subscript
+plt.xlabel('x')
+plt.ylabel('m(T)')
+plt.title(r"$\alpha=" +f"{cfg.alphas}" +r",\ \varepsilon=" +f"{cfg.eps}$")
+plt.legend(loc='upper left')  # Display the legend with subscript notation
+plt.savefig('inter_Distribution.png', format='png', dpi=300)
+plt.show()
+
+# Final distribution for both populations with updated legends
+plt.figure()
+plt.plot(XX, M1[0, :], label='Pop. 1 initial')  # More descriptive name for M1(T)
+plt.plot(XX, M2[0, :], label='Pop. 2 initial')  # More descriptive name for M2(T)
+plt.xlabel('x')
+plt.ylabel('m(T)')
+plt.title(r"$\alpha=" +f"{cfg.alphas}" +r",\ \varepsilon=" +f"{cfg.eps}$")
+plt.legend(loc='upper left')  # Display the legend with subscript notation
+plt.savefig('Initial_Distribution.png', format='png', dpi=300)
+plt.show()
+
+# Final distribution for both populations with updated legends
+plt.figure()
 plt.plot(XX, M1[-1, :], label='Pop. 1 final')  # More descriptive name for M1(T)
 plt.plot(XX, M2[-1, :], label='Pop. 2 final')  # More descriptive name for M2(T)
 plt.axvline(x=x_d1, color='Blue', linestyle='--', linewidth=1, label=r'Desired Opinion $x_{d1}=$' + f'{x_d1}')  # LaTeX for subscript
@@ -336,46 +368,4 @@ plt.ylabel('m(T)')
 plt.title(r"$\alpha=" +f"{cfg.alphas}" +r",\ \varepsilon=" +f"{cfg.eps}$")
 plt.legend(loc='upper left')  # Display the legend with subscript notation
 plt.savefig('Final_Distribution.png', format='png', dpi=300)
-plt.show()
-
-
-# 3D surface plot for value function U1
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-X, Y = np.meshgrid(XX, TT)
-ax.plot_surface(X, Y, U1, cmap='viridis')
-ax.set_title('U1 over Time and Space')
-ax.set_xlabel('x')
-ax.set_ylabel('t')
-ax.set_zlabel('U1')
-plt.show()
-
-# 3D surface plot for value function U2
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-ax.plot_surface(X, Y, U2, cmap='viridis')
-ax.set_title('U2 over Time and Space')
-ax.set_xlabel('x')
-ax.set_ylabel('t')
-ax.set_zlabel('U2')
-plt.show()
-
-# 3D surface plot for distribution M1
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-ax.plot_surface(X, Y, M1, cmap='viridis')
-ax.set_title('M1 over Time and Space')
-ax.set_xlabel('x')
-ax.set_ylabel('t')
-ax.set_zlabel('M1')
-plt.show()
-
-# 3D surface plot for distribution M2
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-ax.plot_surface(X, Y, M2, cmap='viridis')
-ax.set_title('M2 over Time and Space')
-ax.set_xlabel('x')
-ax.set_ylabel('t')
-ax.set_zlabel('M2')
 plt.show()

@@ -1,6 +1,6 @@
 import jax.numpy as jnp
-from jax import jacfwd, vmap, jit
-from jax.scipy.stats import norm
+from jax import jacfwd, vmap
+from jax.scipy.stats import truncnorm
 import matplotlib.pyplot as plt
 import munch
 import os
@@ -30,22 +30,18 @@ class ThreePopulationMFG(object):
         self.eps = eps
         self.h = (xr - xl) / N
 
-    def mu0(self, x, population_index): # uncomment the commented 3 lines in both if and else statements to have initial normal distribution
+    def mu0(self, x, population_index):
+        a, b = -3, 3
         if population_index == 0:
-            # return jnp.ones(x.shape) / (self.xr - self.xl)
-            midpoint = (self.xr + self.xl) / 2
-            sigma_mu = 1.5 # Define your standard deviation
-            return norm.pdf(x, loc=midpoint, scale=sigma_mu)
+            midpoint = -0.5
+            sigma_mu = 1
+            return truncnorm.pdf(x, a=a, b=b, loc=midpoint, scale=sigma_mu)
         elif population_index == 1:
-            # midpoint = (self.xr + self.xl) / 2
-            # sigma_mu = 0.1  # Define your standard deviation
-            # return norm.pdf(x, loc=midpoint, scale=sigma_mu)
             return jnp.ones(x.shape) / (self.xr - self.xl)
         elif population_index == 2:
-            midpoint = (self.xr + self.xl) / 2
-            sigma_mu = 1  # Define your standard deviation
-            return norm.pdf(x, loc=midpoint, scale=sigma_mu)
-            # return jnp.ones(x.shape) / (self.xr - self.xl)
+            midpoint = 0.5
+            sigma_mu = 2
+            return truncnorm.pdf(x, a=a, b=b, loc=midpoint, scale=sigma_mu)
 
     def uT(self, x, population_index):
         if population_index == 0:
@@ -55,23 +51,27 @@ class ThreePopulationMFG(object):
         elif population_index == 2:
             return (x - x_d3) ** 2
 
-
     def local_kernel(self, x, y):
-        # Calculate the Euclidean distance between two points
-        distance = jnp.linalg.norm(x - y)
-        # Return 1 if the distance is less than or equal to epsilon, else return 0
-        return jnp.where(distance <= self.eps, 1, 0)
+        dist = jnp.abs(x - y)
 
-    def psi(self, Xtk, y, lambda_r, K_d):
+        res = jnp.exp(1 - self.eps ** 2 / (1e-12 + self.eps ** 2 - dist ** 2))
+        return res
+
+    def psi(self, Xtk, y, lambda_r, mu_k_t, mu_r_t, sigma_k, population_index, r):
         numerator = self.local_kernel(Xtk, y)
 
         denominator_terms = []
 
-        integral_approx = jnp.sum(self.local_kernel(Xtk, y)) /self.N
-        denominator_terms.append(jnp.maximum(lambda_r * integral_approx * K_d,  0.05))
+        distances = self.K_d(mu_k_t, mu_r_t, sigma_k)
+
+        if (population_index == 0 and r == 2) or (population_index == 2 and r == 0):
+            distances = 0
+
+        integral_approx = jnp.sum(self.local_kernel(Xtk, y) * mu_r_t) * self.h
+        denominator_terms.append(lambda_r * integral_approx * distances)
         denominator = jnp.sum(jnp.array(denominator_terms))
 
-        return numerator / denominator
+        return numerator / (denominator + 1e-12)
 
     def prolong(self, Uvec, Mvec, idx):
         Umtx = jnp.reshape(Uvec, (self.Nt, self.N))
@@ -85,7 +85,7 @@ class ThreePopulationMFG(object):
 
         M0 = self.mu0(self.x_grid, idx)  # Assuming mu0 returns an array of shape (N,)
         UT = vmap(self.uT, in_axes=(0, None))(self.x_grid, idx)
-        U = U.at[self.Nt, :].set(UT)
+        # U = U.at[self.Nt, :].set(UT)
         M = M.at[0, :].set(M0)
         return U, M
 
@@ -109,7 +109,6 @@ class ThreePopulationMFG(object):
 
         return kernel_values
 
-
     def G_m(self, x, mu, population_index):
         """
         Calculate the G_M function for a given population.
@@ -132,15 +131,23 @@ class ThreePopulationMFG(object):
             K_d_value = self.K_d(mu[population_index], mu_r, sigma_k)
             if (population_index == 0 and r == 2) or (population_index == 2 and r == 0):
                 K_d_value = 0
-            psi_values = vmap(lambda y: self.psi(x, y, lambda_r, K_d_value) * y)(self.x_grid)
-
-            integral_approximation = jnp.sum(psi_values) / self.N
+            # K_d_value = 0
+            psi_values = vmap(lambda y: self.psi(x, y, lambda_r, mu[population_index], mu_r, sigma_k, population_index, r) * y * mu_r)(
+                self.x_grid)
+            integral_approximation = jnp.sum(psi_values) * self.h
             interaction_term += lambda_r  * integral_approximation * K_d_value
 
         # Calculate G_M
-        G_M_value = -alpha_k * x + alpha_k * interaction_term
+        G_M_value = alpha_k * x - alpha_k * interaction_term
 
         return G_M_value
+
+
+    def compute_hamiltonian(self, x_grid, dUR, dUL, M, idx):
+        results = []
+        for x, q1, q2 in zip(x_grid, dUR, dUL):
+            results.append(self.g(x, q1, q2, M, idx))
+        return jnp.array(results)
 
     def g(self, x, q1, q2, m, idx):
         p1 = jnp.minimum(q1, 0)
@@ -156,7 +163,7 @@ class ThreePopulationMFG(object):
         dUR = (jnp.roll(U, -1) - U)/self.h
         dUL = (U - jnp.roll(U, 1))/self.h
 
-        Hamiltonian = vmap(lambda x, q1, q2: self.g(x, q1, q2, M, idx))(self.x_grid, dUR, dUL)
+        Hamiltonian = self.compute_hamiltonian(self.x_grid, dUR, dUL, M, idx)
 
         return Hamiltonian
 
@@ -263,7 +270,6 @@ class ThreePopulationMFG(object):
 
         return fps
 
-
     def hjb_sys_vec(self, Uvec, Mvec, idx):
         U, M = self.prolong(Uvec, Mvec, idx)
         return self.hjb_sys(U, M, idx).flatten()
@@ -313,19 +319,19 @@ class ThreePopulationMFG(object):
 np.set_printoptions(precision=20)
 
 cfg = munch.munchify({
-    'T' : 1,
-    'Nt': 45,
-    'xl': -6,
-    'xr': 6,
-    'N' : 65,
-    'nu': 1,
-    'alphas': [0.5, 0.5, 0.5],
-    'sigmas': [0.5, 2, 0.5],
+    'T' : 5,
+    'Nt': 35,
+    'xl': -10,
+    'xr': 10,
+    'N' : 70,
+    'nu': 0.5,
+    'alphas': [0.01, 0.5, 0.01],
+    'sigmas': [0.5, 0.5, 0.5],
     'lambdas':[1/3, 1/3, 1/3],
-    'eps': 1,
-    'hjb_epoch': 200,
+    'eps': 0.5,
+    'hjb_epoch': 50,
     'hjb_lr': 1,
-    'epoch': 150,
+    'epoch': 50,
     'lr': 0.8,
     'tol' : 10 ** (-6),
 })
@@ -392,64 +398,3 @@ plt.ylabel('m(T)')
 plt.legend()
 plt.savefig("final_good.png", dpi=300)
 plt.show()
-
-# 3D surface plot for value function U1
-# fig = plt.figure()
-# ax = fig.add_subplot(111, projection='3d')
-# X, Y = np.meshgrid(XX, TT)
-# ax.plot_surface(X, Y, U1, cmap='viridis')
-# ax.set_title('U1 over Time and Space')
-# ax.set_xlabel('x')
-# ax.set_ylabel('t')
-# ax.set_zlabel('U1')
-# plt.show()
-#
-# # 3D surface plot for value function U2
-# fig = plt.figure()
-# ax = fig.add_subplot(111, projection='3d')
-# ax.plot_surface(X, Y, U2, cmap='viridis')
-# ax.set_title('U2 over Time and Space')
-# ax.set_xlabel('x')
-# ax.set_ylabel('t')
-# ax.set_zlabel('U2')
-# plt.show()
-#
-# # 3D surface plot for value function U3
-# fig = plt.figure()
-# ax = fig.add_subplot(111, projection='3d')
-# ax.plot_surface(X, Y, U3, cmap='viridis')
-# ax.set_title('U3 over Time and Space')
-# ax.set_xlabel('x')
-# ax.set_ylabel('t')
-# ax.set_zlabel('U3')
-# plt.show()
-#
-#
-# # 3D surface plot for distribution M1
-# fig = plt.figure()
-# ax = fig.add_subplot(111, projection='3d')
-# ax.plot_surface(X, Y, M1, cmap='viridis')
-# ax.set_title('M1 over Time and Space')
-# ax.set_xlabel('x')
-# ax.set_ylabel('t')
-# ax.set_zlabel('M1')
-# plt.show()
-
-# fig = plt.figure()
-# ax = fig.add_subplot(111, projection='3d')
-# ax.plot_surface(X, Y, M2, cmap='viridis')
-# ax.set_title('M2 over Time and Space')
-# ax.set_xlabel('x')
-# ax.set_ylabel('t')
-# ax.set_zlabel('M2')
-# plt.show()
-
-
-# fig = plt.figure()
-# ax = fig.add_subplot(111, projection='3d')
-# ax.plot_surface(X, Y, M3, cmap='viridis')
-# ax.set_title('M3 over Time and Space')
-# ax.set_xlabel('x')
-# ax.set_ylabel('t')
-# ax.set_zlabel('M3')
-# plt.show()

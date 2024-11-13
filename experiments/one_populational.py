@@ -59,8 +59,8 @@ class OnePopulationalMFG(object):
         #return jnp.ones(x.shape) / (self.xr - self.xl) # we impose the uniform distribution on [-1, 1]
 
         # midpoint = (self.xr + self.xl) / 2
-        midpoint = 0.5
-        sigma_mu = 1  # Define your standard deviation
+        midpoint = 1.0
+        sigma_mu = 2  # Define your standard deviation
         return truncnorm.pdf(x, loc=midpoint, a=-5, b=5, scale=sigma_mu)
 
     def uT(self, x):
@@ -263,14 +263,14 @@ class OnePopulationalMFG(object):
         return U, M
 
 cfg = munch.munchify({
-    'T' : 7,
-    'Nt': 70,
+    'T' : 1,
+    'Nt': 20,
     'xl': -10,
     'xr': 10,
-    'N' : 60,
-    'nu': 0.5,
+    'N' : 110,
+    'nu': 1,
     'alpha': 0.01,
-    'eps': 0.5,
+    'eps': 1,
     'hjb_epoch': 100,
     'hjb_lr': 1,
     'epoch': 100,
@@ -280,7 +280,7 @@ cfg = munch.munchify({
 
 dt = cfg.T / cfg.Nt
 dx = (cfg.xr-cfg.xl)/cfg.N
-if  (2* cfg.nu * dt)<= dx**2:
+if  not (2* cfg.nu * dt)<= dx**2:
     solver = OnePopulationalMFG(cfg.T, cfg.Nt, cfg.xl, cfg.xr, cfg.N, cfg.nu, cfg.alpha, cfg.eps)
 
     TT = jnp.linspace(0, cfg.T, cfg.Nt + 1)
@@ -302,11 +302,11 @@ if  (2* cfg.nu * dt)<= dx**2:
 
     # Plot for M[-1, :] with a vertical line at x_d
     fig = plt.figure()
-    plt.plot(XX, M[0, :], label=r"Initial Distribution")
-    plt.plot(XX, M[-1, :], label=r"Final Distribution")
+    plt.plot(XX, M[0, :], label=r"Initial mean: 1.0")
+    plt.plot(XX, M[-1, :], label=f"Final mean: {str(round(XX[np.argmax(M[-1, :])], 2))}")
 
     # param_legend = [Line2D([0], [0], color='none', label=r"$\alpha=\frac{1}{2}, \varepsilon=1$")]
-    plt.axvline(x=x_d, color='r', linestyle='--', label=r"Desired opinion $x_{d}$=" + f'{x_d}')
+    plt.axvline(x=(XX[np.argmax(M[-1, :])]), color='r', linestyle='--',)
 
     plt.xlabel(r"$x$")
     plt.ylabel(r"$m(T)$")

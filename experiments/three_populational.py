@@ -6,8 +6,8 @@ import munch
 import os
 import numpy as np
 
-x_d1 = -2
-x_d3 = 2
+x_d1 = -3
+x_d3 = 3
 
 os.environ["JAX_TRACEBACK_FILTERING"]="off"
 # os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"]="platform"
@@ -31,7 +31,7 @@ class ThreePopulationMFG(object):
         self.h = (xr - xl) / N
 
     def mu0(self, x, population_index):
-        a, b = -3, 3
+        a, b = -5, 5
         if population_index == 0:
             midpoint = -0.5
             sigma_mu = 1
@@ -67,7 +67,7 @@ class ThreePopulationMFG(object):
         if (population_index == 0 and r == 2) or (population_index == 2 and r == 0):
             distances = 0
 
-        integral_approx = jnp.sum(self.local_kernel(Xtk, y) * mu_r_t) * self.h
+        integral_approx = jnp.sum(self.local_kernel(Xtk, y)) * self.h
         denominator_terms.append(lambda_r * integral_approx * distances)
         denominator = jnp.sum(jnp.array(denominator_terms))
 
@@ -85,7 +85,7 @@ class ThreePopulationMFG(object):
 
         M0 = self.mu0(self.x_grid, idx)  # Assuming mu0 returns an array of shape (N,)
         UT = vmap(self.uT, in_axes=(0, None))(self.x_grid, idx)
-        # U = U.at[self.Nt, :].set(UT)
+        U = U.at[self.Nt, :].set(UT)
         M = M.at[0, :].set(M0)
         return U, M
 
@@ -319,21 +319,21 @@ class ThreePopulationMFG(object):
 np.set_printoptions(precision=20)
 
 cfg = munch.munchify({
-    'T' : 5,
-    'Nt': 35,
+    'T' : 15,
+    'Nt': 30,
     'xl': -10,
     'xr': 10,
-    'N' : 70,
+    'N' : 60,
     'nu': 0.5,
-    'alphas': [0.01, 0.5, 0.01],
+    'alphas': [0.01, 0.01, 0.01],
     'sigmas': [0.5, 0.5, 0.5],
     'lambdas':[1/3, 1/3, 1/3],
-    'eps': 0.5,
+    'eps': 1,
     'hjb_epoch': 50,
     'hjb_lr': 1,
     'epoch': 50,
-    'lr': 0.8,
-    'tol' : 10 ** (-6),
+    'lr': 1,
+    'tol' : 10 ** (-5),
 })
 
 solver = ThreePopulationMFG(T=cfg.T, Nt=cfg.Nt, xl=cfg.xl, xr=cfg.xr, N=cfg.N, nu=cfg.nu, alphas=cfg.alphas, sigmas=cfg.sigmas, lambdas=cfg.lambdas, eps=cfg.eps)
@@ -344,6 +344,7 @@ TT, XX = jnp.meshgrid(TT, XX)
 
 # U, M = solver.solve_mfg(cfg.lr, cfg.tol, cfg.epoch)
 U1, M1, U2, M2, U3, M3 = solver.solve(cfg.tol, cfg.epoch, cfg.hjb_lr, cfg.hjb_epoch)
+
 
 # Assuming cfg, U1, U2, M1, M2, x_d1, and x_d2 are already defined
 TT = np.linspace(0, cfg.T, cfg.Nt + 1)
@@ -367,23 +368,25 @@ plt.plot(XX, M2[0, :], label="Pop. 2")
 plt.plot(XX, M3[0, :], label="Pop. 3")
 # plt.axvline(x=x_d1, color='Blue', linestyle='--', linewidth=1, label=r'Line at $x_{d1}=$' + f'{x_d1}')
 # plt.axvline(x=x_d3, color='Green', linestyle='--', linewidth=1, label=r'Line at $x_{d1}=$' + f'{x_d3}')
+plt.title(r"$\alpha=" +f"{cfg.alphas}" +r",\ \varepsilon=" +f"{cfg.eps}$")
 plt.xlabel('x')
 plt.ylabel('m(T)')
 plt.legend()
-plt.savefig("final_good.png", dpi=300)
+plt.savefig("init_good.png", dpi=300)
 plt.show()
 
 # Final distribution for both populations
 plt.figure()
-plt.plot(XX, M1[30, :], label="Pop. 1")
-plt.plot(XX, M2[30, :], label="Pop. 2")
-plt.plot(XX, M3[30, :], label="Pop. 3")
+plt.plot(XX, M1[15, :], label="Pop. 1")
+plt.plot(XX, M2[15, :], label="Pop. 2")
+plt.plot(XX, M3[15, :], label="Pop. 3")
 plt.axvline(x=x_d1, color='Blue', linestyle='--', linewidth=1, label=r'Desired opinion $x_{d1}=$' + f'{x_d1}')
 plt.axvline(x=x_d3, color='Green', linestyle='--', linewidth=1, label=r'Desired opinion $x_{d1}=$' + f'{x_d3}')
+plt.title(r"$\alpha=" +f"{cfg.alphas}" +r",\ \varepsilon=" +f"{cfg.eps}$")
 plt.xlabel('x')
 plt.ylabel('m(T)')
 plt.legend()
-plt.savefig("final_good.png", dpi=300)
+plt.savefig("inter_good.png", dpi=300)
 plt.show()
 
 # Final distribution for both populations
@@ -393,6 +396,7 @@ plt.plot(XX, M2[-1, :], label="Pop. 2")
 plt.plot(XX, M3[-1, :], label="Pop. 3")
 plt.axvline(x=x_d1, color='Blue', linestyle='--', linewidth=1, label=r'Desired opinion $x_{d1}=$' + f'{x_d1}')
 plt.axvline(x=x_d3, color='Green', linestyle='--', linewidth=1, label=r'Desired opinion $x_{d1}=$' + f'{x_d3}')
+plt.title(r"$\alpha=" +f"{cfg.alphas}" +r",\ \varepsilon=" +f"{cfg.eps}$")
 plt.xlabel('x')
 plt.ylabel('m(T)')
 plt.legend()

@@ -250,7 +250,7 @@ plt.axvline(x=x_d2, color='Green', linestyle='--', linewidth=1, label=r'Line at 
 plt.xlabel('x')
 plt.ylabel('m(T)')
 plt.legend()
-plt.savefig("final_good.png", dpi=300)
+plt.savefig("final_good1.png", dpi=300)
 plt.show()
 
 # 3D surface plot for value function U1

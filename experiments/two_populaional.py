@@ -30,13 +30,13 @@ class TwoPopulationMFG(object):
     def mu0(self, x, population_index):
         a, b = -5, 5
         if population_index == 0:
-            midpoint = -0.5
-            sigma_mu = 1
+            midpoint = -2
+            sigma_mu = 2
 
             return truncnorm.pdf(x, a =a, b=b, loc=midpoint, scale=sigma_mu)
         elif population_index == 1:
-            midpoint = 0.5
-            sigma_mu = 1
+            midpoint = 2
+            sigma_mu = 2
 
             return truncnorm.pdf(x, a =a, b=b, loc=midpoint, scale=sigma_mu)
 
@@ -81,7 +81,7 @@ class TwoPopulationMFG(object):
 
         M0 = self.mu0(self.x_grid, idx)  # Assuming mu0 returns an array of shape (N,)
         UT = vmap(self.uT, in_axes=(0, None))(self.x_grid, idx)
-        U = U.at[self.Nt, :].set(UT)
+        # U = U.at[self.Nt, :].set(UT)
         M = M.at[0, :].set(M0)
         return U, M
 
@@ -291,16 +291,16 @@ class TwoPopulationMFG(object):
 
 
 cfg = munch.munchify({
-    'T' : 7,
-    'Nt': 30,
+    'T' : 1,
+    'Nt': 20,
     'xl': -10,
     'xr': 10,
-    'N' : 70,
+    'N' : 90,
     'nu': 1,
     'alphas': [0.01, 0.01],
-    'sigmas': [0.5, 0.5],
-    'lambdas': [0.5, 0.5],
-    'eps': 0.5,
+    'sigmas': [1, 1],
+    'lambdas': [0.3, 0.7],
+    'eps': 1,
     'hjb_epoch': 100,
     'hjb_lr': 1,
     'epoch': 50,
@@ -333,23 +333,23 @@ plt.legend()
 plt.show()
 
 # Final distribution for both populations with updated legends
-plt.figure()
-plt.plot(XX, M1[15, :], label='Pop. 1 intermediate')  # More descriptive name for M1(T)
-plt.plot(XX, M2[15, :], label='Pop. 2 intermediate')  # More descriptive name for M2(T)
-
-plt.axvline(x=x_d1, color='Blue', linestyle='--', linewidth=1, label=r'Desired Opinion $x_{d1}=$' + f'{x_d1}')  # LaTeX for subscript
-plt.axvline(x=x_d2, color='Red', linestyle='--', linewidth=1, label=r'Desired Opinion $x_{d2}=$' + f'{x_d2}')  # LaTeX for subscript
-plt.xlabel('x')
-plt.ylabel('m(T)')
-plt.title(r"$\alpha=" +f"{cfg.alphas}" +r",\ \varepsilon=" +f"{cfg.eps}$")
-plt.legend(loc='upper left')  # Display the legend with subscript notation
-plt.savefig('inter_Distribution.png', format='png', dpi=300)
-plt.show()
+# plt.figure()
+# plt.plot(XX, M1[15, :], label='Pop. 1 intermediate')  # More descriptive name for M1(T)
+# plt.plot(XX, M2[15, :], label='Pop. 2 intermediate')  # More descriptive name for M2(T)
+#
+# plt.axvline(x=x_d1, color='Blue', linestyle='--', linewidth=1, label=r'Desired Opinion $x_{d1}=$' + f'{x_d1}')  # LaTeX for subscript
+# plt.axvline(x=x_d2, color='Red', linestyle='--', linewidth=1, label=r'Desired Opinion $x_{d2}=$' + f'{x_d2}')  # LaTeX for subscript
+# plt.xlabel('x')
+# plt.ylabel('m(T)')
+# plt.title(r"$\alpha=" +f"{cfg.alphas}" +r",\ \varepsilon=" +f"{cfg.eps}$")
+# plt.legend(loc='upper left')  # Display the legend with subscript notation
+# plt.savefig('inter_Distribution.png', format='png', dpi=300)
+# plt.show()
 
 # Final distribution for both populations with updated legends
 plt.figure()
-plt.plot(XX, M1[0, :], label='Pop. 1 initial')  # More descriptive name for M1(T)
-plt.plot(XX, M2[0, :], label='Pop. 2 initial')  # More descriptive name for M2(T)
+plt.plot(XX, M1[0, :], label=f'Mean: {str(round(XX[np.argmax(M1[0, :])], 2))}')  # More descriptive name for M1(T)
+plt.plot(XX, M2[0, :], label=f'Mean: {str(round(XX[np.argmax(M2[0, :])], 2))}')  # More descriptive name for M2(T)
 plt.xlabel('x')
 plt.ylabel('m(T)')
 plt.title(r"$\alpha=" +f"{cfg.alphas}" +r",\ \varepsilon=" +f"{cfg.eps}$")
@@ -359,12 +359,12 @@ plt.show()
 
 # Final distribution for both populations with updated legends
 plt.figure()
-plt.plot(XX, M1[-1, :], label='Pop. 1 final')  # More descriptive name for M1(T)
-plt.plot(XX, M2[-1, :], label='Pop. 2 final')  # More descriptive name for M2(T)
-plt.axvline(x=x_d1, color='Blue', linestyle='--', linewidth=1, label=r'Desired Opinion $x_{d1}=$' + f'{x_d1}')  # LaTeX for subscript
-plt.axvline(x=x_d2, color='Red', linestyle='--', linewidth=1, label=r'Desired Opinion $x_{d2}=$' + f'{x_d2}')  # LaTeX for subscript
+plt.plot(XX, M1[-1, :], label=f'Mean: {str(round(XX[np.argmax(M1[-1, :])], 2))}')  # More descriptive name for M1(T)
+plt.plot(XX, M2[-1, :], label=f'Mean: {str(round(XX[np.argmax(M2[-1, :])], 2))}')  # More descriptive name for M2(T)
+# plt.axvline(x=x_d1, color='Blue', linestyle='--', linewidth=1, label=r'Desired Opinion $x_{d1}=$' + f'{x_d1}')  # LaTeX for subscript
+# plt.axvline(x=x_d2, color='Red', linestyle='--', linewidth=1, label=r'Desired Opinion $x_{d2}=$' + f'{x_d2}')  # LaTeX for subscript
 plt.xlabel('x')
-plt.ylabel('m(T)')
+plt.ylabel('m(T) final')
 plt.title(r"$\alpha=" +f"{cfg.alphas}" +r",\ \varepsilon=" +f"{cfg.eps}$")
 plt.legend(loc='upper left')  # Display the legend with subscript notation
 plt.savefig('Final_Distribution.png', format='png', dpi=300)

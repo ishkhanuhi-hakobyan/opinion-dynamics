@@ -51,7 +51,7 @@ class OnePopulationalMFG(object):
         self.N = N
         self.nu = nu
         self.alpha = alpha
-        self.X = jnp.linspace(xl, xr, N, endpoint=False)
+        self.X = jnp.linspace(xl, xr, N)
         self.h = (xr - xl) / N
         self.eps = eps
 
@@ -60,7 +60,7 @@ class OnePopulationalMFG(object):
 
         # midpoint = (self.xr + self.xl) / 2
         midpoint = 1.0
-        sigma_mu = 2  # Define your standard deviation
+        sigma_mu = 1  # Define your standard deviation
         return truncnorm.pdf(x, loc=midpoint, a=-5, b=5, scale=sigma_mu)
 
     def uT(self, x):
@@ -263,19 +263,19 @@ class OnePopulationalMFG(object):
         return U, M
 
 cfg = munch.munchify({
-    'T' : 1,
-    'Nt': 20,
-    'xl': -10,
-    'xr': 10,
-    'N' : 110,
-    'nu': 1,
+    'T' : 2,
+    'Nt': 25,
+    'xl': -7,
+    'xr': 7,
+    'N' : 140,
+    'nu': 0.5,
     'alpha': 0.01,
-    'eps': 1,
+    'eps': 0.2,
     'hjb_epoch': 100,
     'hjb_lr': 1,
     'epoch': 100,
     'lr': 1,
-    'tol' : 10 ** (-4),
+    'tol' : 10 ** (-6),
 })
 
 dt = cfg.T / cfg.Nt
@@ -284,14 +284,14 @@ if  not (2* cfg.nu * dt)<= dx**2:
     solver = OnePopulationalMFG(cfg.T, cfg.Nt, cfg.xl, cfg.xr, cfg.N, cfg.nu, cfg.alpha, cfg.eps)
 
     TT = jnp.linspace(0, cfg.T, cfg.Nt + 1)
-    XX = jnp.linspace(cfg.xl, cfg.xr, cfg.N, endpoint=False)
+    XX = jnp.linspace(cfg.xl, cfg.xr, cfg.N)
     TT, XX = jnp.meshgrid(TT, XX)
 
     U, M = solver.solve(cfg.tol, cfg.epoch, cfg.hjb_lr, cfg.hjb_epoch)
+    final_mean = round(XX[np.argmax(M[-1, :]),0].item(), 2)
 
     TT = jnp.linspace(0, cfg.T, cfg.Nt + 1)
-    XX = jnp.linspace(-10, 10, cfg.N, endpoint=False)
-    # TT, XX = jnp.meshgrid(TT, XX_l)
+    XX = jnp.linspace(-10, 10, cfg.N)
 
     # Plot for U[-1, :]
     fig = plt.figure()
@@ -303,17 +303,14 @@ if  not (2* cfg.nu * dt)<= dx**2:
     # Plot for M[-1, :] with a vertical line at x_d
     fig = plt.figure()
     plt.plot(XX, M[0, :], label=r"Initial mean: 1.0")
-    plt.plot(XX, M[-1, :], label=f"Final mean: {str(round(XX[np.argmax(M[-1, :])], 2))}")
-
-    # param_legend = [Line2D([0], [0], color='none', label=r"$\alpha=\frac{1}{2}, \varepsilon=1$")]
-    plt.axvline(x=(XX[np.argmax(M[-1, :])]), color='r', linestyle='--',)
+    plt.plot(XX, M[-1, :], label=f"Final mean: {final_mean}")
+    # plt.axvline(x=x_d, color='r', linestyle='--',)
 
     plt.xlabel(r"$x$")
     plt.ylabel(r"$m(T)$")
     plt.title(r"$\alpha=" +f"{cfg.alpha}" +r",\ \varepsilon=" +f"{cfg.eps}$")
     plt.savefig("one_populational.png", dpi=300)
     plt.legend()
-    # plt.legend(handles=param_legend, loc='upper left')
     plt.show()
 
 # # 3D surface plot for U

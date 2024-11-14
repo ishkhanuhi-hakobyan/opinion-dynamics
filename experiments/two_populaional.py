@@ -5,8 +5,9 @@ from jax import jacfwd, vmap
 from jax.scipy.stats import norm, truncnorm
 import munch
 import os
-x_d1 = -3
-x_d2 = 3
+
+x_d1 = -2
+x_d2 = 2
 os.environ["JAX_TRACEBACK_FILTERING"]="off"
 
 class TwoPopulationMFG(object):
@@ -30,15 +31,19 @@ class TwoPopulationMFG(object):
     def mu0(self, x, population_index):
         a, b = -5, 5
         if population_index == 0:
-            midpoint = -2
-            sigma_mu = 2
+            midpoint = -1
+            sigma_mu = 1
+            mu = truncnorm.pdf(x, a=a, b=b, loc=midpoint, scale=sigma_mu)
 
-            return truncnorm.pdf(x, a =a, b=b, loc=midpoint, scale=sigma_mu)
+            # return mu / jnp.sum(mu * self.h)
+            return mu
         elif population_index == 1:
-            midpoint = 2
-            sigma_mu = 2
+            midpoint = 1
+            sigma_mu = 1
+            mu = truncnorm.pdf(x, a=a, b=b, loc=midpoint, scale=sigma_mu)
 
-            return truncnorm.pdf(x, a =a, b=b, loc=midpoint, scale=sigma_mu)
+            # return mu / jnp.sum(mu * self.h)
+            return mu
 
     def uT(self, x, population_index):
         if population_index == 0:
@@ -50,7 +55,7 @@ class TwoPopulationMFG(object):
     def local_kernel(self, x, y):
         dist = jnp.abs(x - y)
 
-        res = jnp.exp(1 - self.eps ** 2 / (1e-12 + self.eps ** 2 - dist ** 2))
+        res = jnp.exp(1 - self.eps ** 2 / (1e-10 + self.eps ** 2 - dist ** 2))
         return res
 
     def psi(self, Xtk, y, lambda_r, mu_k_t, mu_r_t, sigma_k):
@@ -81,17 +86,19 @@ class TwoPopulationMFG(object):
 
         M0 = self.mu0(self.x_grid, idx)  # Assuming mu0 returns an array of shape (N,)
         UT = vmap(self.uT, in_axes=(0, None))(self.x_grid, idx)
-        # U = U.at[self.Nt, :].set(UT)
+        U = U.at[self.Nt, :].set(UT)
         M = M.at[0, :].set(M0)
         return U, M
 
     def wasserstein_1(self, x, y):
+        x = jnp.maximum(x, 0)
+        y = jnp.maximum(y, 0)
         x = x / jnp.sum(x)
         y = y / jnp.sum(y)
 
         # Compute the cumulative distribution functions
-        cdf_x = jnp.cumsum(x)
-        cdf_y = jnp.cumsum(y)
+        cdf_x = jnp.cumsum(x) * self.h
+        cdf_y = jnp.cumsum(y) * self.h
 
         # Compute the Wasserstein-1 distance (L1 norm between the CDFs)
         w1_distance = jnp.sum(jnp.abs(cdf_x - cdf_y))
@@ -291,15 +298,15 @@ class TwoPopulationMFG(object):
 
 
 cfg = munch.munchify({
-    'T' : 1,
+    'T' : 2,
     'Nt': 20,
-    'xl': -10,
-    'xr': 10,
-    'N' : 90,
+    'xl': -8,
+    'xr': 8,
+    'N' : 80,
     'nu': 1,
     'alphas': [0.01, 0.01],
-    'sigmas': [1, 1],
-    'lambdas': [0.3, 0.7],
+    'sigmas': [0.5, 0.5],
+    'lambdas': [0.5, 0.5],
     'eps': 1,
     'hjb_epoch': 100,
     'hjb_lr': 1,
@@ -311,8 +318,9 @@ cfg = munch.munchify({
 
 solver = TwoPopulationMFG(T=cfg.T, Nt=cfg.Nt, xl=cfg.xl, xr=cfg.xr, N=cfg.N, nu=cfg.nu, alphas=cfg.alphas, sigmas=cfg.sigmas, lambdas=cfg.lambdas, eps=cfg.eps)
 
+
 TT = jnp.linspace(0, cfg.T, cfg.Nt + 1)
-XX = jnp.linspace(cfg.xl, cfg.xr, cfg.N, endpoint=False)
+XX = jnp.linspace(cfg.xl, cfg.xr, cfg.N)
 TT, XX = jnp.meshgrid(TT, XX)
 
 # U, M = solver.solve_mfg(cfg.lr, cfg.tol, cfg.epoch)
@@ -320,7 +328,7 @@ U1, M1, U2, M2 = solver.solve(cfg.tol, cfg.epoch, cfg.hjb_lr, cfg.hjb_epoch)
 
 # Assuming cfg, U1, U2, M1, M2, x_d1, and x_d2 are already defined
 TT = np.linspace(0, cfg.T, cfg.Nt + 1)
-XX = np.linspace(-10, 10, cfg.N, endpoint=False)
+XX = np.linspace(-10, 10, cfg.N)
 
 # Final value function for both populations
 plt.figure()

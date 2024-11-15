@@ -1,6 +1,7 @@
+import jax
 from jax import jacfwd, jit
 import jax.numpy as jnp
-from jax import vmap
+from jax import vmap, lax
 from jax.scipy.stats import norm, truncnorm
 import numpy as np
 import matplotlib.pyplot as plt
@@ -52,16 +53,22 @@ class OnePopulationalMFG(object):
         self.nu = nu
         self.alpha = alpha
         self.X = jnp.linspace(xl, xr, N)
-        self.h = (xr - xl) / N
+        self.h = (xr - xl) / (N-1)
         self.eps = eps
 
-    def m0(self, x):
-        #return jnp.ones(x.shape) / (self.xr - self.xl) # we impose the uniform distribution on [-1, 1]
 
-        # midpoint = (self.xr + self.xl) / 2
-        midpoint = 1.0
-        sigma_mu = 1  # Define your standard deviation
-        return truncnorm.pdf(x, loc=midpoint, a=-5, b=5, scale=sigma_mu)
+    def m0(self, x):
+        a, b = -5, 5
+        arr = np.array(x)
+        filtered_x = np.where(arr>=a, arr, 0)
+        # x = np.where(filtered_x<=b, filtered_x, 0)
+        midpoint = 1
+        sigma_mu = 1
+        b1 = (a - midpoint) / sigma_mu
+        b2 = (b - midpoint) / sigma_mu
+        mu = truncnorm.pdf(x, a=b1, b=b2, loc=midpoint, scale=sigma_mu)
+
+        return mu
 
     def uT(self, x):
         return (x - x_d) ** 2  # we suppose that every agent prefers to zero opinion
@@ -199,10 +206,10 @@ class OnePopulationalMFG(object):
         M = M.at[1:, :].set(Mmtx)
 
         # compute the values of m at time 0 and the values of u at time T
-        M0 = vmap(self.m0)(self.X)
+        M0 = self.m0(self.X)
         UT = vmap(self.uT)(self.X)
 
-        # U = U.at[self.Nt, :].set(UT)
+        U = U.at[self.Nt, :].set(UT)
         M = M.at[0, :].set(M0)
         return U, M
 
@@ -264,13 +271,13 @@ class OnePopulationalMFG(object):
 
 cfg = munch.munchify({
     'T' : 2,
-    'Nt': 25,
+    'Nt': 20,
     'xl': -7,
     'xr': 7,
-    'N' : 140,
+    'N' : 141,
     'nu': 0.5,
     'alpha': 0.01,
-    'eps': 0.2,
+    'eps': 0.5,
     'hjb_epoch': 100,
     'hjb_lr': 1,
     'epoch': 100,
@@ -288,11 +295,15 @@ if  not (2* cfg.nu * dt)<= dx**2:
     TT, XX = jnp.meshgrid(TT, XX)
 
     U, M = solver.solve(cfg.tol, cfg.epoch, cfg.hjb_lr, cfg.hjb_epoch)
-    final_mean = round(XX[np.argmax(M[-1, :]),0].item(), 2)
+    max_idx = np.argmax(M[-1, :]).item()
+    max_init = np.argmax(M[0, :]).item()
+    XX = jnp.linspace(-10, 10, cfg.N)
+    max_item = XX[max_idx]
+    max_item_init = XX[max_init]
+    final_mean = round(max_item, 2)
+    init_mean = round(max_item_init, 2)
 
     TT = jnp.linspace(0, cfg.T, cfg.Nt + 1)
-    XX = jnp.linspace(-10, 10, cfg.N)
-
     # Plot for U[-1, :]
     fig = plt.figure()
     plt.plot(XX, U[-1, :])
@@ -300,37 +311,14 @@ if  not (2* cfg.nu * dt)<= dx**2:
     plt.ylabel(r"$u(T)$")
     plt.title("Final Value Function $u(T)$")
 
-    # Plot for M[-1, :] with a vertical line at x_d
     fig = plt.figure()
-    plt.plot(XX, M[0, :], label=r"Initial mean: 1.0")
-    plt.plot(XX, M[-1, :], label=f"Final mean: {final_mean}")
-    # plt.axvline(x=x_d, color='r', linestyle='--',)
+    plt.plot(XX, M[0, :], label=f"Initial mean: {round(float(init_mean), 2)}")
+    plt.plot(XX, M[-1, :], label=f"Final mean: {round(float(final_mean), 2)}")
+    plt.axvline(x=x_d, color='r', linestyle='--',)
 
     plt.xlabel(r"$x$")
     plt.ylabel(r"$m(T)$")
-    plt.title(r"$\alpha=" +f"{cfg.alpha}" +r",\ \varepsilon=" +f"{cfg.eps}$")
+    plt.title(r"$\alpha=" + f"{cfg.alpha}" + r",\ \varepsilon=" + f"{cfg.eps}, T={cfg.T}$")
     plt.savefig("one_populational.png", dpi=300)
     plt.legend()
     plt.show()
-
-# # 3D surface plot for U
-# fig = plt.figure()
-# ax = fig.add_subplot(111, projection='3d')
-# surf = ax.plot_surface(TT.T, XX.T, U, cmap='viridis')
-# fig.colorbar(surf, label=r"$u$", pad=0.1)
-# ax.set_title("Surface Plot of $u$")
-# ax.set_xlabel(r"$t$")
-# ax.set_ylabel(r"$x$")
-# ax.set_zlabel(r"$u$")
-
-# 3D surface plot for M
-# fig = plt.figure()
-# ax = fig.add_subplot(111, projection='3d')
-# surf = ax.plot_surface(TT.T, XX.T, M, cmap='viridis')
-# fig.colorbar(surf, label=r"$m$", pad=0.1)
-# ax.set_title("Surface Plot of $m$")
-# ax.set_xlabel(r"$t$")
-# ax.set_ylabel(r"$x$")
-# ax.set_zlabel(r"$m$")
-
-# plt.show()

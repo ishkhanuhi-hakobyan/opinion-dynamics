@@ -6,8 +6,8 @@ import munch
 import os
 import numpy as np
 
-x_d1 = -3
-x_d3 = 3
+x_d1 = -2
+x_d3 = 2
 
 os.environ["JAX_TRACEBACK_FILTERING"]="off"
 # os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"]="platform"

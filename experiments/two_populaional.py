@@ -22,7 +22,7 @@ class TwoPopulationMFG(object):
         self.sigmas = sigmas
         self.lambdas = lambdas
         self.dt = T / Nt
-        self.dx = (xr - xl) / N
+        self.dx = (xr - xl) / (N - 1)
         self.x_grid = jnp.linspace(xl, xr, N)
         self.t_grid = jnp.linspace(0, T, Nt)
         self.eps = eps
@@ -33,16 +33,17 @@ class TwoPopulationMFG(object):
         if population_index == 0:
             midpoint = -1
             sigma_mu = 1
-            mu = truncnorm.pdf(x, a=a, b=b, loc=midpoint, scale=sigma_mu)
+            b1 = (a - midpoint)/sigma_mu
+            b2 = (b - midpoint)/sigma_mu
+            mu = truncnorm.pdf(x, a=b1, b=b2, loc=midpoint, scale=sigma_mu)
 
-            # return mu / jnp.sum(mu * self.h)
             return mu
         elif population_index == 1:
             midpoint = 1
             sigma_mu = 1
-            mu = truncnorm.pdf(x, a=a, b=b, loc=midpoint, scale=sigma_mu)
-
-            # return mu / jnp.sum(mu * self.h)
+            b1 = (a - midpoint) / sigma_mu
+            b2 = (b - midpoint) / sigma_mu
+            mu = truncnorm.pdf(x, a=b1, b=b2, loc=midpoint, scale=sigma_mu)
             return mu
 
     def uT(self, x, population_index):
@@ -93,14 +94,10 @@ class TwoPopulationMFG(object):
     def wasserstein_1(self, x, y):
         x = jnp.maximum(x, 0)
         y = jnp.maximum(y, 0)
-        x = x / jnp.sum(x)
-        y = y / jnp.sum(y)
 
-        # Compute the cumulative distribution functions
         cdf_x = jnp.cumsum(x) * self.h
         cdf_y = jnp.cumsum(y) * self.h
 
-        # Compute the Wasserstein-1 distance (L1 norm between the CDFs)
         w1_distance = jnp.sum(jnp.abs(cdf_x - cdf_y))
 
         return w1_distance
@@ -300,14 +297,14 @@ class TwoPopulationMFG(object):
 cfg = munch.munchify({
     'T' : 2,
     'Nt': 20,
-    'xl': -8,
-    'xr': 8,
-    'N' : 80,
-    'nu': 1,
+    'xl': -7,
+    'xr': 7,
+    'N' : 71,
+    'nu': 0.5,
     'alphas': [0.01, 0.01],
     'sigmas': [0.5, 0.5],
     'lambdas': [0.5, 0.5],
-    'eps': 1,
+    'eps': 0.7,
     'hjb_epoch': 100,
     'hjb_lr': 1,
     'epoch': 50,
@@ -329,7 +326,19 @@ U1, M1, U2, M2 = solver.solve(cfg.tol, cfg.epoch, cfg.hjb_lr, cfg.hjb_epoch)
 # Assuming cfg, U1, U2, M1, M2, x_d1, and x_d2 are already defined
 TT = np.linspace(0, cfg.T, cfg.Nt + 1)
 XX = np.linspace(-10, 10, cfg.N)
+max_idx1 = np.argmax(M1[-1, :]).item()
+max_init1= np.argmax(M1[0, :]).item()
+max_item1 = XX[max_idx1]
+max_item_init1= XX[max_init1]
+final_mean1 = round(max_item1, 2)
+init_mean1 = round(max_item_init1, 2)
 
+max_idx2 = np.argmax(M2[-1, :]).item()
+max_init2= np.argmax(M2[0, :]).item()
+max_item2 = XX[max_idx2]
+max_item_init2= XX[max_init2]
+final_mean2 = round(max_item2, 2)
+init_mean2 = round(max_item_init2, 2)
 # Final value function for both populations
 plt.figure()
 plt.plot(XX, U1[-1, :], label='U1(T)')
@@ -340,40 +349,24 @@ plt.ylabel('u(T)')
 plt.legend()
 plt.show()
 
-# Final distribution for both populations with updated legends
-# plt.figure()
-# plt.plot(XX, M1[15, :], label='Pop. 1 intermediate')  # More descriptive name for M1(T)
-# plt.plot(XX, M2[15, :], label='Pop. 2 intermediate')  # More descriptive name for M2(T)
-#
-# plt.axvline(x=x_d1, color='Blue', linestyle='--', linewidth=1, label=r'Desired Opinion $x_{d1}=$' + f'{x_d1}')  # LaTeX for subscript
-# plt.axvline(x=x_d2, color='Red', linestyle='--', linewidth=1, label=r'Desired Opinion $x_{d2}=$' + f'{x_d2}')  # LaTeX for subscript
-# plt.xlabel('x')
-# plt.ylabel('m(T)')
-# plt.title(r"$\alpha=" +f"{cfg.alphas}" +r",\ \varepsilon=" +f"{cfg.eps}$")
-# plt.legend(loc='upper left')  # Display the legend with subscript notation
-# plt.savefig('inter_Distribution.png', format='png', dpi=300)
-# plt.show()
-
-# Final distribution for both populations with updated legends
-plt.figure()
-plt.plot(XX, M1[0, :], label=f'Mean: {str(round(XX[np.argmax(M1[0, :])], 2))}')  # More descriptive name for M1(T)
-plt.plot(XX, M2[0, :], label=f'Mean: {str(round(XX[np.argmax(M2[0, :])], 2))}')  # More descriptive name for M2(T)
+plt.plot(XX, M1[0, :], label=f'Mean: {round(float(init_mean1))}')  # More descriptive name for M1(T)
+plt.plot(XX, M2[0, :], label=f'Mean: {round(float(init_mean2))}')  # More descriptive name for M2(T)
 plt.xlabel('x')
 plt.ylabel('m(T)')
-plt.title(r"$\alpha=" +f"{cfg.alphas}" +r",\ \varepsilon=" +f"{cfg.eps}$")
+plt.title(r"$\alpha=" +f"{cfg.alphas}" +r",\ \varepsilon=" +f"{cfg.eps}, T={cfg.T}$")
 plt.legend(loc='upper left')  # Display the legend with subscript notation
 plt.savefig('Initial_Distribution.png', format='png', dpi=300)
 plt.show()
 
 # Final distribution for both populations with updated legends
 plt.figure()
-plt.plot(XX, M1[-1, :], label=f'Mean: {str(round(XX[np.argmax(M1[-1, :])], 2))}')  # More descriptive name for M1(T)
-plt.plot(XX, M2[-1, :], label=f'Mean: {str(round(XX[np.argmax(M2[-1, :])], 2))}')  # More descriptive name for M2(T)
+plt.plot(XX, M1[-1, :], label=f'Mean: {round(float(final_mean1), 2)}')  # More descriptive name for M1(T)
+plt.plot(XX, M2[-1, :], label=f'Mean: {round(float(final_mean1), 2)}')  # More descriptive name for M2(T)
 # plt.axvline(x=x_d1, color='Blue', linestyle='--', linewidth=1, label=r'Desired Opinion $x_{d1}=$' + f'{x_d1}')  # LaTeX for subscript
 # plt.axvline(x=x_d2, color='Red', linestyle='--', linewidth=1, label=r'Desired Opinion $x_{d2}=$' + f'{x_d2}')  # LaTeX for subscript
 plt.xlabel('x')
 plt.ylabel('m(T) final')
-plt.title(r"$\alpha=" +f"{cfg.alphas}" +r",\ \varepsilon=" +f"{cfg.eps}$")
+plt.title(r"$\alpha=" +f"{cfg.alphas}" +r",\ \varepsilon=" +f"{cfg.eps}, T={cfg.T}$")
 plt.legend(loc='upper left')  # Display the legend with subscript notation
 plt.savefig('Final_Distribution.png', format='png', dpi=300)
 plt.show()

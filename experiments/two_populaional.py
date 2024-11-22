@@ -21,15 +21,14 @@ class TwoPopulationMFG(object):
         self.alphas = alphas
         self.sigmas = sigmas
         self.lambdas = lambdas
-        self.dt = T / Nt
-        self.dx = (xr - xl) / (N - 1)
+        self.dt = T / (Nt-1)
         self.x_grid = jnp.linspace(xl, xr, N)
         self.t_grid = jnp.linspace(0, T, Nt)
         self.eps = eps
-        self.h = (xr - xl) / N
+        self.h = round((xr - xl) / (N-1), 2)
 
     def mu0(self, x, population_index):
-        a, b = -5, 5
+        a, b = -4, 4
         if population_index == 0:
             midpoint = -1
             sigma_mu = 1
@@ -50,13 +49,13 @@ class TwoPopulationMFG(object):
         if population_index == 0:
             return (x - x_d1) ** 2  # For population 1
         elif population_index == 1:
-            return (x - x_d2) ** 2  # For population 2
+            return (x - x_d2) ** 2  # For population 2*
 
 
     def local_kernel(self, x, y):
         dist = jnp.abs(x - y)
 
-        res = jnp.exp(1 - self.eps ** 2 / (1e-10 + self.eps ** 2 - dist ** 2))
+        res = jnp.exp(1 - self.eps ** 2 / (1e-15 + self.eps ** 2 - dist ** 2))
         return res
 
     def psi(self, Xtk, y, lambda_r, mu_k_t, mu_r_t, sigma_k):
@@ -72,7 +71,7 @@ class TwoPopulationMFG(object):
         denominator_terms.append(lambda_r  * integral_approx * distances)
         denominator = jnp.sum(jnp.array(denominator_terms))
 
-        return numerator / (denominator + 1e-12)
+        return numerator / (denominator + 1e-15)
 
 
     def prolong(self, Uvec, Mvec, idx):
@@ -152,7 +151,7 @@ class TwoPopulationMFG(object):
         UR = jnp.roll(Uk, -1)
         UL = jnp.roll(Uk, 1)
 
-        Delta_U = - (2 * Uk - UR - UL) / self.h ** 2
+        Delta_U = - (2 * Uk - UR - UL) / (self.h ** 2)
 
         Dt_U = (Uk1 - Uk) / self.dt
 
@@ -296,15 +295,15 @@ class TwoPopulationMFG(object):
 
 cfg = munch.munchify({
     'T' : 2,
-    'Nt': 20,
+    'Nt': 21,
     'xl': -7,
     'xr': 7,
     'N' : 71,
-    'nu': 0.5,
-    'alphas': [0.01, 0.01],
-    'sigmas': [0.5, 0.5],
+    'nu': 1,
+    'alphas': [0.5, 0.5],
+    'sigmas': [1, 1],
     'lambdas': [0.5, 0.5],
-    'eps': 0.7,
+    'eps': 0.5,
     'hjb_epoch': 100,
     'hjb_lr': 1,
     'epoch': 50,
@@ -330,15 +329,15 @@ max_idx1 = np.argmax(M1[-1, :]).item()
 max_init1= np.argmax(M1[0, :]).item()
 max_item1 = XX[max_idx1]
 max_item_init1= XX[max_init1]
-final_mean1 = round(max_item1, 2)
-init_mean1 = round(max_item_init1, 2)
+final_mean1 = max_item1
+init_mean1 = max_item_init1
 
 max_idx2 = np.argmax(M2[-1, :]).item()
 max_init2= np.argmax(M2[0, :]).item()
 max_item2 = XX[max_idx2]
 max_item_init2= XX[max_init2]
-final_mean2 = round(max_item2, 2)
-init_mean2 = round(max_item_init2, 2)
+final_mean2 = max_item2
+init_mean2 = max_item_init2
 # Final value function for both populations
 plt.figure()
 plt.plot(XX, U1[-1, :], label='U1(T)')
@@ -349,8 +348,8 @@ plt.ylabel('u(T)')
 plt.legend()
 plt.show()
 
-plt.plot(XX, M1[0, :], label=f'Mean: {round(float(init_mean1))}')  # More descriptive name for M1(T)
-plt.plot(XX, M2[0, :], label=f'Mean: {round(float(init_mean2))}')  # More descriptive name for M2(T)
+plt.plot(XX, M1[0, :], label=f'Mean: {init_mean1}')  # More descriptive name for M1(T)
+plt.plot(XX, M2[0, :], label=f'Mean: {init_mean2}')  # More descriptive name for M2(T)
 plt.xlabel('x')
 plt.ylabel('m(T)')
 plt.title(r"$\alpha=" +f"{cfg.alphas}" +r",\ \varepsilon=" +f"{cfg.eps}, T={cfg.T}$")
@@ -360,8 +359,8 @@ plt.show()
 
 # Final distribution for both populations with updated legends
 plt.figure()
-plt.plot(XX, M1[-1, :], label=f'Mean: {round(float(final_mean1), 2)}')  # More descriptive name for M1(T)
-plt.plot(XX, M2[-1, :], label=f'Mean: {round(float(final_mean1), 2)}')  # More descriptive name for M2(T)
+plt.plot(XX, M1[-1, :], label=f'Mean: {final_mean1}')  # More descriptive name for M1(T)
+plt.plot(XX, M2[-1, :], label=f'Mean: {final_mean1}')  # More descriptive name for M2(T)
 # plt.axvline(x=x_d1, color='Blue', linestyle='--', linewidth=1, label=r'Desired Opinion $x_{d1}=$' + f'{x_d1}')  # LaTeX for subscript
 # plt.axvline(x=x_d2, color='Red', linestyle='--', linewidth=1, label=r'Desired Opinion $x_{d2}=$' + f'{x_d2}')  # LaTeX for subscript
 plt.xlabel('x')

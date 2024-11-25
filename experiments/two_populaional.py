@@ -1,3 +1,4 @@
+
 import jax.numpy as jnp
 import numpy as np
 import matplotlib.pyplot as plt
@@ -5,7 +6,7 @@ from jax import jacfwd, vmap
 from jax.scipy.stats import norm, truncnorm
 import munch
 import os
-
+from ott.tools import wassdis_p
 x_d1 = -2
 x_d2 = 2
 os.environ["JAX_TRACEBACK_FILTERING"]="off"
@@ -28,22 +29,31 @@ class TwoPopulationMFG(object):
         self.h = round((xr - xl) / (N-1), 2)
 
     def mu0(self, x, population_index):
-        a, b = -4, 4
+        a, b = -5, 5
+        arr = np.array(x)  # Convert x to a numpy array
+
+        filtered_x = arr[(arr >= a) & (arr <= b)]
+
         if population_index == 0:
             midpoint = -1
             sigma_mu = 1
-            b1 = (a - midpoint)/sigma_mu
-            b2 = (b - midpoint)/sigma_mu
-            mu = truncnorm.pdf(x, a=b1, b=b2, loc=midpoint, scale=sigma_mu)
-
-            return mu
         elif population_index == 1:
             midpoint = 1
             sigma_mu = 1
-            b1 = (a - midpoint) / sigma_mu
-            b2 = (b - midpoint) / sigma_mu
-            mu = truncnorm.pdf(x, a=b1, b=b2, loc=midpoint, scale=sigma_mu)
-            return mu
+        else:
+            raise ValueError("Invalid population_index. Must be 0 or 1.")
+
+        # Calculate truncation bounds in standardized form
+        b1 = (a - midpoint) / sigma_mu
+        b2 = (b - midpoint) / sigma_mu
+
+        # Compute the PDF for filtered values
+        pdf_values = truncnorm.pdf(filtered_x, a=b1, b=b2, loc=midpoint, scale=sigma_mu)
+
+        mu = np.zeros_like(arr)
+        mu[(arr >= a) & (arr <= b)] = pdf_values
+
+        return mu
 
     def uT(self, x, population_index):
         if population_index == 0:
@@ -91,20 +101,18 @@ class TwoPopulationMFG(object):
         return U, M
 
     def wasserstein_1(self, x, y):
-        x = jnp.maximum(x, 0)
-        y = jnp.maximum(y, 0)
+        x = x / jnp.sum(x*self.h)
+        y = y / jnp.sum(y*self.h)
+        cdf_x = jnp.cumsum(x)*self.h
+        cdf_y = jnp.cumsum(y)*self.h
 
-        cdf_x = jnp.cumsum(x) * self.h
-        cdf_y = jnp.cumsum(y) * self.h
-
-        w1_distance = jnp.sum(jnp.abs(cdf_x - cdf_y))
+        w1_distance = jnp.sum(jnp.abs(cdf_x - cdf_y)) * self.h
 
         return w1_distance
 
     def K_d(self, x, y, sigma):
         w_p = self.wasserstein_1(x, y)
-
-        kernel_values = jnp.where(w_p <= sigma, jnp.exp(-w_p), 0)
+        kernel_values = jnp.where(w_p <= sigma, 1, 0)
 
         return kernel_values
 
@@ -114,19 +122,16 @@ class TwoPopulationMFG(object):
         # Calculate the interaction term
         interaction_term = jnp.zeros_like(x)
         for r, lambda_r in enumerate(self.lambdas):
-            mu_r = mu[r]
-            K_d_value = self.K_d(mu[population_index], mu_r, sigma_k)
+            mu_r = self.dens[r]
+            mu_k = self.dens[population_index]
+            K_d_value = self.K_d(mu_k, mu_r, sigma_k)
             # K_d_value = 0
-            psi_values = vmap(lambda y: self.psi(x, y, lambda_r, mu[population_index], mu_r, sigma_k) * y * mu_r)(self.x_grid)
+            psi_values = vmap(lambda y: self.psi(x, y, lambda_r, mu_k, mu_r, sigma_k) * y * mu_r)(self.x_grid)
 
-
-            # Approximate the integral as the sum of areas of rectangles
             integral_approximation = jnp.sum(psi_values) * self.h
             interaction_term += lambda_r  * integral_approximation * K_d_value
 
-        # Calculate G_M
         G_M_value = alpha_k * x - alpha_k * interaction_term
-        # G_M_value = alpha_k * interaction_term
 
         return G_M_value
 
@@ -253,8 +258,15 @@ class TwoPopulationMFG(object):
 
 
     def hjb_sys_vec(self, Uvec, Mvec, idx):
-        U, M = self.prolong(Uvec, Mvec, idx)
-        return self.hjb_sys(U, M, idx).flatten()
+        U1, M1 = self.prolong(Uvec, Mvec[0], idx)
+        U2, M2 = self.prolong(Uvec, Mvec[1], idx)
+        self.M1 = M1
+        self.M2 = M2
+        self.dens = [M1, M2]
+        if idx == 0:
+            return self.hjb_sys(U1, M1, idx).flatten()
+        if idx == 1:
+            return self.hjb_sys(U2, M2, idx).flatten()
 
     def fp_sys_vec(self, Mvec, Uvec, idx):
         U, M = self.prolong(Uvec, Mvec, idx)
@@ -272,8 +284,9 @@ class TwoPopulationMFG(object):
         iter_num = 0
 
         while error > tol and iter_num < epoch:
-            new_U1 = self.solve_hjb(U1, M1, hjb_lr, epoch=hjb_epoch, idx=0)
-            new_U2 = self.solve_hjb(U2, M2, hjb_lr, epoch=hjb_epoch, idx=1)
+
+            new_U1 = self.solve_hjb(U1, [M1, M2], hjb_lr, epoch=hjb_epoch, idx=0)
+            new_U2 = self.solve_hjb(U2, [M1, M2], hjb_lr, epoch=hjb_epoch, idx=1)
             new_M1 = self.solve_fp(M1, new_U1, 0)
             new_M2 = self.solve_fp(M2, new_U2, 1)
 
@@ -300,14 +313,14 @@ cfg = munch.munchify({
     'xr': 7,
     'N' : 71,
     'nu': 1,
-    'alphas': [0.5, 0.5],
-    'sigmas': [1, 1],
+    'alphas': [0.01, 0.01],
+    'sigmas': [1e-7, 1e-7],
     'lambdas': [0.5, 0.5],
     'eps': 0.5,
     'hjb_epoch': 100,
-    'hjb_lr': 1,
+    'hjb_lr': 0.5,
     'epoch': 50,
-    'lr': 1,
+    'lr': 0.5,
     'tol': 10 ** (-5),
 })
 
@@ -322,8 +335,8 @@ TT, XX = jnp.meshgrid(TT, XX)
 # U, M = solver.solve_mfg(cfg.lr, cfg.tol, cfg.epoch)
 U1, M1, U2, M2 = solver.solve(cfg.tol, cfg.epoch, cfg.hjb_lr, cfg.hjb_epoch)
 
-# Assuming cfg, U1, U2, M1, M2, x_d1, and x_d2 are already defined
-TT = np.linspace(0, cfg.T, cfg.Nt + 1)
+ # Assuming cfg, U1, U2, M1, M2, x_d1, and x_d2 are already defined
+TT = np.linspace(0, cfg.T, cfg.Nt)
 XX = np.linspace(-10, 10, cfg.N)
 max_idx1 = np.argmax(M1[-1, :]).item()
 max_init1= np.argmax(M1[0, :]).item()
@@ -348,8 +361,8 @@ plt.ylabel('u(T)')
 plt.legend()
 plt.show()
 
-plt.plot(XX, M1[0, :], label=f'Mean: {init_mean1}')  # More descriptive name for M1(T)
-plt.plot(XX, M2[0, :], label=f'Mean: {init_mean2}')  # More descriptive name for M2(T)
+plt.plot(XX, M1[0, :], label=f'Mean: {round(init_mean1, 2)}')  # More descriptive name for M1(T)
+plt.plot(XX, M2[0, :], label=f'Mean: {round(init_mean2, 2)}')  # More descriptive name for M2(T)
 plt.xlabel('x')
 plt.ylabel('m(T)')
 plt.title(r"$\alpha=" +f"{cfg.alphas}" +r",\ \varepsilon=" +f"{cfg.eps}, T={cfg.T}$")
@@ -359,13 +372,16 @@ plt.show()
 
 # Final distribution for both populations with updated legends
 plt.figure()
-plt.plot(XX, M1[-1, :], label=f'Mean: {final_mean1}')  # More descriptive name for M1(T)
-plt.plot(XX, M2[-1, :], label=f'Mean: {final_mean1}')  # More descriptive name for M2(T)
-# plt.axvline(x=x_d1, color='Blue', linestyle='--', linewidth=1, label=r'Desired Opinion $x_{d1}=$' + f'{x_d1}')  # LaTeX for subscript
-# plt.axvline(x=x_d2, color='Red', linestyle='--', linewidth=1, label=r'Desired Opinion $x_{d2}=$' + f'{x_d2}')  # LaTeX for subscript
+plt.plot(XX, M1[-1, :], label=f'Mean: {round(final_mean1, 2)}')  # More descriptive name for M1(T)
+plt.plot(XX, M2[-1, :], label=f'Mean: {round(final_mean2, 2)}')  # More descriptive name for M2(T)
+plt.axvline(x=x_d1, color='Blue', linestyle='--', linewidth=1, label=r'Desired Opinion')  # LaTeX for subscript
+plt.axvline(x=x_d2, color='Red', linestyle='--', linewidth=1, label=r'Desired Opinion')  # LaTeX for subscript
 plt.xlabel('x')
 plt.ylabel('m(T) final')
 plt.title(r"$\alpha=" +f"{cfg.alphas}" +r",\ \varepsilon=" +f"{cfg.eps}, T={cfg.T}$")
 plt.legend(loc='upper left')  # Display the legend with subscript notation
 plt.savefig('Final_Distribution.png', format='png', dpi=300)
 plt.show()
+
+
+

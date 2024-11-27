@@ -6,7 +6,6 @@ from jax import jacfwd, vmap
 from jax.scipy.stats import norm, truncnorm
 import munch
 import os
-from ott.tools import wassdis_p
 x_d1 = -2
 x_d2 = 2
 os.environ["JAX_TRACEBACK_FILTERING"]="off"

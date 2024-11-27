@@ -9,7 +9,7 @@ import os
 x_d1 = -2
 x_d2 = 2
 os.environ["JAX_TRACEBACK_FILTERING"]="off"
-os.environ["JAX_PLATFORM_NAME"] = 'cpu'
+
 class TwoPopulationMFG(object):
     def __init__(self, T, Nt, xl, xr, N, nu, alphas, sigmas, lambdas, eps):
         self.T = T
@@ -34,10 +34,10 @@ class TwoPopulationMFG(object):
         filtered_x = arr[(arr >= a) & (arr <= b)]
 
         if population_index == 0:
-            midpoint = -0.5
+            midpoint = -1
             sigma_mu = 1
         elif population_index == 1:
-            midpoint = 0.5
+            midpoint = 1
             sigma_mu = 1
         else:
             raise ValueError("Invalid population_index. Must be 0 or 1.")
@@ -49,6 +49,7 @@ class TwoPopulationMFG(object):
 
         mu = np.zeros_like(arr)
         mu[(arr >= a) & (arr <= b)] = pdf_values
+        # mu = mu / mu.sum()
 
         return mu
 
@@ -61,21 +62,24 @@ class TwoPopulationMFG(object):
     def local_kernel(self, x, y):
         dist_squared = (x - y) ** 2
         epsilon_squared = self.eps ** 2
-        res = jnp.exp(1 - epsilon_squared / (epsilon_squared - dist_squared + 1e-15))
+        res = jnp.exp(1 - epsilon_squared / (epsilon_squared - dist_squared + 1e-6))
         return res
 
     def psi(self, Xtk, y, lambda_r, mu_k_t, mu, sigma_k):
+        # Precompute local kernels for the entire grid
+        kernel_values = self.local_kernel(Xtk, self.x_grid)  # Use all grid points
+        lambdas = jnp.array(self.lambdas)
+        mu = jnp.stack(mu)
+        # Precompute contributions from all r
+        denominator_contributions = vmap(
+            lambda r: lambda_r * self.K_d(mu_k_t, mu[r], sigma_k) * jnp.sum(kernel_values * mu[r] * self.h)
+        )(jnp.arange(len(lambdas)))
+
+        # Sum the contributions to form the denominator
+        denominator = jnp.sum(denominator_contributions)
+
+        # Compute the numerator (only for a single y)
         numerator = self.local_kernel(Xtk, y)
-
-        denominator = 0.0
-        kernel_values = self.local_kernel(Xtk, y)
-        for r, lambda_r in enumerate(self.lambdas):
-            K_d_value = self.K_d(mu_k_t, mu[r], sigma_k)
-
-
-            integral_approx = jnp.sum(jnp.multiply(kernel_values, mu[r]) * self.h)
-
-            denominator += lambda_r * K_d_value * integral_approx
 
         return numerator / (denominator + 1e-6)
 
@@ -96,25 +100,19 @@ class TwoPopulationMFG(object):
         M = M.at[0, :].set(M0)
         return U, M
 
-    def wasserstein_1(self, points1, points2, weights1=None, weights2=None):
-        n, = points1.shape
-        m,  = points2.shape
+    def wasserstein_1(self, weights1, weights2):
+        a, b = -5, 5
+        mask = (self.x_grid >= a) & (self.x_grid <= b)
+        points = self.x_grid[mask]
+        weights1 = weights1[mask]
+        weights2 = weights2[mask]
 
-            # Default to uniform weights if not provided
-        if weights1 is None:
-            weights1 = jnp.ones(n) / n
-        if weights2 is None:
-            weights2 = jnp.ones(m) / m
+        # Compute cumulative distributions
+        cdf1 = jnp.cumsum(weights1)
+        cdf2 = jnp.cumsum(weights2)
 
-        # Compute cost matrix
-        cost_matrix = jnp.abs(points1[:, None] - points2[None, :])
-
-        # Assign each row to the column with the minimum cost (greedy assignment)
-        col_ind = jnp.argmin(cost_matrix, axis=1)
-        row_ind = jnp.arange(cost_matrix.shape[0])
-
-        # Compute Wasserstein distance
-        distance = jnp.sum(cost_matrix[row_ind, col_ind] * jnp.minimum(weights1[row_ind], weights2[col_ind]))
+        # Compute Wasserstein distance as area between CDFs
+        distance = jnp.sum(jnp.abs(cdf1 - cdf2) * jnp.diff(points, prepend=points[0]))
         return distance
 
     def K_d(self, x, y, sigma):
@@ -123,45 +121,25 @@ class TwoPopulationMFG(object):
 
         return kernel_values
 
+
     def G_m(self, x, mu, population_index):
         alpha_k = self.alphas[population_index]
         sigma_k = self.sigmas[population_index]
+        lambdas = jnp.array(self.lambdas)
+        mu = jnp.stack(mu)
+        # Precompute kernel values for all r
+        kernel_values = vmap(lambda r, mu_r: self.K_d(mu[population_index], mu_r, sigma_k))(
+            jnp.arange(len(lambdas)), mu
+        )
 
-        interaction_term = 0.0
+        # Compute the integral and interaction terms in a single loop
+        def compute_interaction(r, mu_r):
+            psi_values = self.psi(x, self.x_grid, lambdas[r], mu[population_index], mu, sigma_k)
+            integral = jnp.sum(psi_values * self.x_grid * mu_r * self.h)
+            return lambdas[r] * kernel_values[r] * integral
 
-        for r, lambda_r in enumerate(self.lambdas):
-            K_d_value = self.K_d(mu[population_index], mu[r], sigma_k)
-
-            psi_values = vmap(
-                lambda y: self.psi(x, y, lambda_r, mu[population_index], [mu[population_index], mu[r]], sigma_k) * y *
-                          mu[r]
-            )(self.x_grid)
-
-            integral_approximation = jnp.sum(psi_values) * self.h
-
-            interaction_term += lambda_r * integral_approximation * K_d_value
-
-        # Final computation
-        G_M_value = alpha_k * x - alpha_k * interaction_term
-
-        return G_M_value
-
-    def G_m2(self, x, mu, population_index):
-        alpha_k = self.alphas[population_index]
-        sigma_k = self.sigmas[population_index]
-
-        interaction_term = 0.0
-
-        for r, lambda_r in enumerate(self.lambdas):
-            K_d_value = self.K_d(mu[population_index], mu[r], sigma_k)
-
-            psi_values = vmap(
-                lambda y: self.psi(x, y, lambda_r, mu[population_index], [mu[population_index], mu[r]], sigma_k) * y *
-                          mu[r]
-            )(self.x_grid)
-            integral_approximation = jnp.sum(psi_values) * self.h
-
-            interaction_term += lambda_r * integral_approximation * K_d_value
+        # Vectorize the interaction computation
+        interaction_term = jnp.sum(vmap(compute_interaction)(jnp.arange(len(lambdas)), mu))
 
         # Final computation
         G_M_value = alpha_k * x - alpha_k * interaction_term
@@ -220,7 +198,7 @@ class TwoPopulationMFG(object):
 
         A = - (dGqDifference1 + dGqs2R - dGqs1L) / self.h
 
-        b = vmap(lambda x: self.G_m2(x, [M1, M2], idx))(self.x_grid)
+        b = vmap(lambda x: self.G_m(x, [M1, M2], idx))(self.x_grid)
         bp1 = lambda x: jnp.minimum(x, 0)
         bp2 = lambda x: jnp.maximum(x, 0)
 
@@ -346,18 +324,18 @@ class TwoPopulationMFG(object):
 
 
 cfg = munch.munchify({
-    'T' : 2,
-    'Nt': 31,
-    'xl': -6,
-    'xr': 6,
+    'T' : 1,
+    'Nt': 21,
+    'xl': -7,
+    'xr': 7,
     'N' : 71,
     'nu': 0.5,
     'alphas': [0.01, 0.01],
-    'sigmas': [0.01, 0.01],
+    'sigmas': [0.0001, 0.0001],
     'lambdas': [0.5, 0.5],
     'eps': 0.5,
     'hjb_epoch': 50,
-    'hjb_lr': 0.5,
+    'hjb_lr': 1,
     'epoch': 50,
     'lr': 1,
     'tol': 10 ** (-5),
@@ -378,14 +356,14 @@ U1, M1, U2, M2 = solver.solve(cfg.tol, cfg.epoch, cfg.hjb_lr, cfg.hjb_epoch)
  # Assuming cfg, U1, U2, M1, M2, x_d1, and x_d2 are already defined
 TT = np.linspace(0, cfg.T, cfg.Nt)
 XX = np.linspace(-10, 10, cfg.N)
-max_idx1 = np.argmax(M1[-1, :]).item()
+max_idx1 = np.argmax(M1[10, :]).item()
 max_init1= np.argmax(M1[0, :]).item()
 max_item1 = XX[max_idx1]
 max_item_init1= XX[max_init1]
 final_mean1 = max_item1
 init_mean1 = max_item_init1
 
-max_idx2 = np.argmax(M2[-1, :]).item()
+max_idx2 = np.argmax(M2[10, :]).item()
 max_init2= np.argmax(M2[0, :]).item()
 max_item2 = XX[max_idx2]
 max_item_init2= XX[max_init2]
@@ -412,8 +390,8 @@ plt.show()
 
 # Final distribution for both populations with updated legends
 plt.figure()
-plt.plot(XX, M1[-1, :], label=f'Mean: {round(final_mean1, 2)}')  # More descriptive name for M1(T)
-plt.plot(XX, M2[-1, :], label=f'Mean: {round(final_mean2, 2)}')  # More descriptive name for M2(T)
+plt.plot(XX, M1[10, :], label=f'Mean: {round(final_mean1, 2)}')  # More descriptive name for M1(T)
+plt.plot(XX, M2[10, :], label=f'Mean: {round(final_mean2, 2)}')  # More descriptive name for M2(T)
 plt.axvline(x=x_d1, color='Blue', linestyle='--', linewidth=1, label=r'Desired Opinion')  # LaTeX for subscript
 plt.axvline(x=x_d2, color='Red', linestyle='--', linewidth=1, label=r'Desired Opinion')  # LaTeX for subscript
 plt.xlabel('x')
